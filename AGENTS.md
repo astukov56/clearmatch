@@ -1,9 +1,19 @@
-<!-- BEGIN:nextjs-agent-rules -->
+# ClearMatch Engineering Invariants
 
-## This is NOT the Next.js you know
+1. THE DETERMINISTIC SPLIT:
+   - LLMs extract entities only (raw OCR text, descriptions, unit rates).
+   - The LLM NEVER calculates totals, taxes, variances, or margins.
+   - All financial logic must reside in pure TypeScript domain functions.
 
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+2. INTEGER-ONLY FINANCIAL MATH:
+   - Zero floating-point operations for money.
+   - All currency values must be stored and calculated as integer cents (e.g., $10.50 -> 1050).
+   - Tax rates must use basis points (e.g., 10% -> 1000 bps).
 
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+3. STRICT TYPESCRIPT:
+   - Strict mode enabled, zero `any`, zero untyped API responses.
+   - Database queries must use types generated from `supabase gen types typescript`.
 
-<!-- END:nextjs-agent-rules -->
+4. FAILURE DEFENSE:
+   - Every invoice extraction must validate against Zod and return `extraction_confidence`
+     and an `unresolved_ambiguities` array.
