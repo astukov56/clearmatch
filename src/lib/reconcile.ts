@@ -286,3 +286,18 @@ export function reconcile(
 }
 
 export const reconcileInvoice = reconcile;
+
+export function reconcileInvoiceAgainstPO(
+  invoiceOrPo: ExtractedInvoice | PurchaseOrder,
+  poOrInvoice: PurchaseOrder | ExtractedInvoice
+): ReconciliationResult {
+  // Check if first argument is a PurchaseOrder
+  if (
+    'po_number' in invoiceOrPo &&
+    'items' in invoiceOrPo &&
+    (invoiceOrPo.items.length === 0 || 'sku' in invoiceOrPo.items[0])
+  ) {
+    return reconcile(invoiceOrPo as PurchaseOrder, poOrInvoice as ExtractedInvoice);
+  }
+  return reconcile(poOrInvoice as PurchaseOrder, invoiceOrPo as ExtractedInvoice);
+}
