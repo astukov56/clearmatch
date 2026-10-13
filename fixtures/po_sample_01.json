@@ -1,0 +1,30 @@
+{
+    "id": "po-1001",
+    "po_number": "PO-2026-0881",
+    "vendor_name": "Apex Industrial Supplies",
+    "currency": "USD",
+    "issue_date": "2026-10-01",
+    "items": [
+        {
+            "line_number": 1,
+            "sku": "NUT-HEX-001",
+            "description": "Industrial Hex Bolts M8 (Box of 100)",
+            "quantity": 10,
+            "unit_price_cents": 1250,
+            "tax_rate_bps": 1000,
+            "total_cents": 12500
+        },
+        {
+            "line_number": 2,
+            "sku": "BRG-BALL-004",
+            "description": "Sealed Ball Bearings 22mm",
+            "quantity": 4,
+            "unit_price_cents": 4500,
+            "tax_rate_bps": 1000,
+            "total_cents": 18000
+        }
+    ],
+    "subtotal_cents": 30500,
+    "tax_cents": 3050,
+    "total_cents": 33550
+}

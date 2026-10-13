@@ -1,0 +1,27 @@
+{
+    "vendor_name": "Apex Industrial Supplies",
+    "invoice_number": "INV-99412",
+    "invoice_date": "2026-10-12",
+    "currency": "USD",
+    "items": [
+        {
+            "raw_description": "Industrial Hex Bolts M8 (Box of 100)",
+            "quantity": 10,
+            "unit_price": 12.95,
+            "tax_rate_percent": 10.0,
+            "raw_item_total": 129.50
+        },
+        {
+            "raw_description": "Sealed Ball Bearings 22mm",
+            "quantity": 4,
+            "unit_price": 45.00,
+            "tax_rate_percent": 10.0,
+            "raw_item_total": 180.00
+        }
+    ],
+    "raw_subtotal": 309.50,
+    "raw_tax_total": 30.95,
+    "raw_grand_total": 340.45,
+    "extraction_confidence": 0.96,
+    "unresolved_ambiguities": []
+}
