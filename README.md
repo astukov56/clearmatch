@@ -21,7 +21,7 @@
 **ClearMatch** is an automated accounts payable reconciliation system designed to solve invoice drift, phantom charges, and quantity mismatches between vendor invoices and purchase orders (POs).
 
 Unlike traditional solutions that rely on fuzzy LLM summaries or brittle regex parsers, ClearMatch enforces a **strict deterministic split**:
-- **Multimodal AI (Gemini 2.5 Flash)** performs entity extraction and optical character recognition (OCR) directly from document images and PDFs.
+- **Multimodal AI (Gemini 3.8 Flash)** performs entity extraction and optical character recognition (OCR) directly from document images and PDFs.
 - **Pure TypeScript Domain Logic** performs 100% of the mathematical calculations, tax verifications, discrepancy detections, and tolerance checks.
 
 ---
@@ -56,7 +56,7 @@ ClearMatch adheres to four strict architectural rules:
 | :--- | :---: | :--- |
 | **Integer Currency Math Library** | ✅ Complete | Zero floating point, integer cents, basis points rounding (`src/lib/money.ts`) |
 | **Deterministic Reconciliation Engine** | ✅ Complete | Line item matching, unit rate variance, quantity drift (`src/lib/reconcile.ts`) |
-| **Gemini 2.5 Flash Vision OCR** | ✅ Complete | Multimodal entity extraction with structured output & Zod validation |
+| **Gemini 3.8 Flash Vision OCR** | ✅ Complete | Multimodal entity extraction with structured output & Zod validation |
 | **Reconciliation API Route** | ✅ Complete | `/api/reconcile` supports direct file uploads (PNG, JPEG, PDF) & JSON payloads |
 | **Utilitarian Workbench UI** | 🔄 In Progress | Split-view PO vs. Invoice inspector, synthetic canvas invoice generator |
 | **Supabase Integration & Persistence** | 🔄 In Progress | PO storage, reconciliation audit logs, historical tracking |
@@ -69,7 +69,7 @@ ClearMatch adheres to four strict architectural rules:
 
 - **Framework**: [Next.js 16](https://nextjs.org/) (App Router, Turbopack) & [React 19](https://react.dev/)
 - **Language**: [TypeScript 5](https://www.typescriptlang.org/) (Strict Mode)
-- **AI / Multimodal OCR**: [@google/genai](https://www.npmjs.com/package/@google/genai) (Gemini 2.5 Flash)
+- **AI / Multimodal OCR**: [@google/genai](https://www.npmjs.com/package/@google/genai) (Gemini 3.8 Flash)
 - **Validation**: [Zod](https://zod.dev/)
 - **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
 - **Testing**: [Vitest](https://vitest.dev/)
