@@ -60,6 +60,11 @@ describe('extractInvoiceFromDocument', () => {
     expect(result.extraction_confidence).toBe(0.96);
     expect(result.unresolved_ambiguities).toEqual([]);
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+    expect(mockGenerateContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gemini-3.8-flash',
+      })
+    );
   });
 
   it('strips markdown code fences from model response before parsing', async () => {

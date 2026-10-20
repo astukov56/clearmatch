@@ -7,6 +7,7 @@ import {
   ReconciliationResult,
 } from '../../../lib/reconcile';
 import samplePOFixture from '../../../../fixtures/po_sample_01.json';
+import sampleInvoiceDriftFixture from '../../../../fixtures/invoice_sample_01_drift.json';
 
 export interface ReconcileApiResponse {
   success: boolean;
@@ -74,6 +75,19 @@ export async function POST(
       );
     }
 
+    if (file.size === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'EMPTY_FILE',
+            message: 'Uploaded file is empty (0 bytes).',
+          },
+        },
+        { status: 400 }
+      );
+    }
+
     const normalizedMime = normalizeMimeType(file.type);
     if (!ALLOWED_MIME_TYPES.includes(normalizedMime as AllowedMimeType)) {
       return NextResponse.json(
@@ -108,30 +122,36 @@ export async function POST(
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString('base64');
 
+    const isSample = formData.get('sample') === 'true' || formData.get('mock') === 'true';
+
     let rawExtraction: ExtractedInvoice;
-    try {
-      rawExtraction = await extractInvoiceFromDocument({
-        base64Data,
-        mimeType: normalizedMime as AllowedMimeType,
-      });
-    } catch (extractionError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'EXTRACTION_FAILED',
-            message:
-              extractionError instanceof Error
-                ? extractionError.message
-                : 'Failed to extract invoice data from document.',
-            details:
-              extractionError instanceof Error
-                ? extractionError.stack
-                : extractionError,
+    if (isSample) {
+      rawExtraction = sampleInvoiceDriftFixture as ExtractedInvoice;
+    } else {
+      try {
+        rawExtraction = await extractInvoiceFromDocument({
+          base64Data,
+          mimeType: normalizedMime as AllowedMimeType,
+        });
+      } catch (extractionError) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'EXTRACTION_FAILED',
+              message:
+                extractionError instanceof Error
+                  ? extractionError.message
+                  : 'Failed to extract invoice data from document.',
+              details:
+                extractionError instanceof Error
+                  ? extractionError.stack
+                  : extractionError,
+            },
           },
-        },
-        { status: 422 }
-      );
+          { status: 422 }
+        );
+      }
     }
 
     const reconciliation = reconcileInvoiceAgainstPO(rawExtraction, purchaseOrder);

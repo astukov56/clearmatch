@@ -57,6 +57,22 @@ describe('POST /api/reconcile', () => {
     expect(json.data?.reconciliation.po_number).toBe('PO-2026-0881');
   });
 
+  it('uses sample drift fixture when sample flag is set to true without calling extractor', async () => {
+    const formData = new FormData();
+    const file = new File(['dummy-bytes'], 'invoice.png', { type: 'image/png' });
+    formData.append('file', file);
+    formData.append('sample', 'true');
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data?.reconciliation.status).toBe('FLAGGED_DRIFT');
+    expect(mockExtractInvoiceFromDocument).not.toHaveBeenCalled();
+  });
+
   it('normalizes image/jpg MIME type to image/jpeg', async () => {
     mockExtractInvoiceFromDocument.mockResolvedValueOnce(sampleInvoiceDrift);
 
@@ -86,6 +102,22 @@ describe('POST /api/reconcile', () => {
     expect(response.status).toBe(400);
     expect(json.success).toBe(false);
     expect(json.error?.code).toBe('MISSING_FILE');
+  });
+
+  it('returns 400 when file is empty (0 bytes)', async () => {
+    const formData = new FormData();
+    const emptyFile = new File([], 'invoice_empty.png', { type: 'image/png' });
+    formData.append('file', emptyFile);
+    formData.append('po_id', 'po-1001');
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(400);
+    expect(json.success).toBe(false);
+    expect(json.error?.code).toBe('EMPTY_FILE');
+    expect(json.error?.message).toBe('Uploaded file is empty (0 bytes).');
   });
 
   it('returns 415 when file has unsupported MIME type', async () => {

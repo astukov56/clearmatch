@@ -1,69 +1,730 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { centsToDollars, dollarsToCents } from '../lib/money';
+import {
+  ReconciliationResult,
+  ReconciledLineItem,
+  ReconciliationStatus,
+  POLineItem,
+} from '../lib/reconcile';
+import { ExtractedInvoice } from '../lib/extraction/schemas';
+import samplePOJson from '../../fixtures/po_sample_01.json';
+
+interface POFixture {
+  id: string;
+  po_number: string;
+  vendor_name: string;
+  currency: string;
+  issue_date: string;
+  items: POLineItem[];
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+}
+
+const activePO = samplePOJson as POFixture;
+
+interface ReconcileApiResponse {
+  success: boolean;
+  data?: {
+    reconciliation: ReconciliationResult;
+    raw_extraction: ExtractedInvoice;
+  };
+  error?: {
+    code: string;
+    message: string;
+    details?: unknown;
+  };
+}
+
+/**
+ * Helper using an offscreen <canvas> (800x600, white background, black monospace text)
+ * that draws a realistic invoice matching fixtures/invoice_sample_01_drift.json.
+ */
+export async function generateSampleInvoicePng(): Promise<File> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('Canvas rendering requires a browser environment.'));
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 800;
+    canvas.height = 600;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      reject(new Error('Failed to acquire 2D canvas context.'));
+      return;
+    }
+
+    // White background
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 800, 600);
+
+    // Black monospace text
+    ctx.fillStyle = '#000000';
+    ctx.textBaseline = 'top';
+
+    // Header: "INVOICE: INV-99412 | PO: PO-2026-0881"
+    ctx.font = 'bold 20px monospace';
+    ctx.fillText('INVOICE: INV-99412 | PO: PO-2026-0881', 40, 50);
+
+    // Vendor: "Apex Industrial Supplies"
+    ctx.font = '16px monospace';
+    ctx.fillText('Vendor: Apex Industrial Supplies', 40, 110);
+
+    // Date: "2026-10-14 | Currency: USD"
+    ctx.fillText('Date: 2026-10-14 | Currency: USD', 40, 140);
+
+    // Line 1: "Industrial Hex Bolts M8 (Box of 100) | Qty: 10 | Unit Price: $12.95 | Total: $129.50"
+    ctx.fillText(
+      'Line 1: Industrial Hex Bolts M8 (Box of 100) | Qty: 10 | Unit Price: $12.95 | Total: $129.50',
+      40,
+      210
+    );
+
+    // Line 2: "Sealed Ball Bearings 22mm | Qty: 4 | Unit Price: $45.00 | Total: $180.00"
+    ctx.fillText(
+      'Line 2: Sealed Ball Bearings 22mm | Qty: 4 | Unit Price: $45.00 | Total: $180.00',
+      40,
+      250
+    );
+
+    // Footer: "Subtotal: $309.50 | Tax (10%): $30.95 | Total: $340.45"
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText(
+      'Footer: Subtotal: $309.50 | Tax (10%): $30.95 | Total: $340.45',
+      40,
+      330
+    );
+
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Failed to generate PNG blob from canvas.'));
+        return;
+      }
+      const file = new File([blob], 'invoice_sample_01_drift.png', {
+        type: 'image/png',
+      });
+      resolve(file);
+    }, 'image/png');
+  });
+}
+
+export default function ClearMatchOperatorWorkbench() {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('');
+  const [errorBanner, setErrorBanner] = useState<{ code: string; message: string } | null>(null);
+
+  const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
+  const [rawExtraction, setRawExtraction] = useState<ExtractedInvoice | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    generateSampleInvoicePng()
+      .then((file) => {
+        if (isMounted) {
+          setSelectedFile(file);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to initialize sample invoice PNG:', err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleFileSelection = useCallback((file: File) => {
+    setSelectedFile(file);
+    setErrorBanner(null);
+  }, []);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelection(e.dataTransfer.files[0]);
+    }
+  };
+
+  const executeReconciliation = async (fileToSubmit: File, isSample = false) => {
+    setIsLoading(true);
+    setErrorBanner(null);
+    setLoadingText(
+      isSample
+        ? 'Loading synthetic payload & reconciling against baseline PO...'
+        : 'Running Gemini 3.8 Flash OCR entity extraction...'
+    );
+
+    try {
+      const formData = new FormData();
+      formData.append('file', fileToSubmit);
+      formData.append('po_id', activePO.id);
+      if (isSample) {
+        formData.append('sample', 'true');
+      }
+
+      const response = await fetch('/api/reconcile', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = (await response.json()) as ReconcileApiResponse;
+
+      if (!response.ok || !result.success || !result.data) {
+        const code = result.error?.code || `HTTP_${response.status}`;
+        const message = result.error?.message || 'Reconciliation service encountered an unexpected error.';
+        setErrorBanner({ code, message });
+        return;
+      }
+
+      setReconciliation(result.data.reconciliation);
+      setRawExtraction(result.data.raw_extraction);
+    } catch (err) {
+      setErrorBanner({
+        code: 'NETWORK_ERROR',
+        message: err instanceof Error ? err.message : 'Unable to connect to reconciliation API endpoint.',
+      });
+    } finally {
+      setIsLoading(false);
+      setLoadingText('');
+    }
+  };
+
+  const handleRunSample = async () => {
+    const sampleFile =
+      selectedFile && selectedFile.size > 0
+        ? selectedFile
+        : await generateSampleInvoicePng();
+    setSelectedFile(sampleFile);
+    executeReconciliation(sampleFile, true);
+  };
+
+  const handleManualUpload = () => {
+    if (!selectedFile || selectedFile.size === 0) return;
+    executeReconciliation(selectedFile, false);
+  };
+
+  // Compute invoiced subtotal in integer cents deterministically from line items
+  const invoicedLineSubtotalCents = reconciliation
+    ? reconciliation.line_items.reduce((sum, item) => sum + item.invoiced_line_total_cents, 0)
+    : 0;
+
+  // Compute invoiced grand total in integer cents (using raw_grand_total if present or subtotal)
+  const invoicedGrandTotalCents = rawExtraction?.raw_grand_total
+    ? dollarsToCents(rawExtraction.raw_grand_total)
+    : invoicedLineSubtotalCents;
+
+  const grandTotalVarianceCents = invoicedGrandTotalCents - activePO.total_cents;
+
+  const renderStatusBadge = (status: ReconciliationStatus) => {
+    switch (status) {
+      case 'FLAGGED_DRIFT':
+        return (
+          <span className="bg-rose-100 text-rose-800 border border-rose-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
+            DRIFT DETECTED
+          </span>
+        );
+      case 'APPROVED':
+        return (
+          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
+            VERIFIED MATCH
+          </span>
+        );
+      case 'REQUIRES_MANUAL_REVIEW':
+        return (
+          <span className="bg-amber-100 text-amber-800 border border-amber-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
+            MANUAL REVIEW
+          </span>
+        );
+    }
+  };
+
+  const renderLineStatus = (status: ReconciledLineItem['status']) => {
+    switch (status) {
+      case 'MATCH':
+        return <span className="font-mono text-emerald-700 font-semibold text-[11px]">MATCH</span>;
+      case 'PRICE_MISMATCH':
+        return <span className="font-mono text-rose-700 font-semibold text-[11px]">PRICE DRIFT</span>;
+      case 'QUANTITY_MISMATCH':
+        return <span className="font-mono text-amber-700 font-semibold text-[11px]">QTY MISMATCH</span>;
+      case 'UNEXPECTED_ITEM':
+        return <span className="font-mono text-purple-700 font-semibold text-[11px]">UNEXPECTED</span>;
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-[#fafafa] text-neutral-900 flex flex-col font-sans">
+      {/* 1. Top Navigation Bar */}
+      <header className="border-b border-neutral-200 bg-white px-6 py-3 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          {/* Left wordmark and deterministic badge */}
+          <div className="flex items-center gap-3">
+            <span className="text-base font-bold tracking-tight text-neutral-900">ClearMatch</span>
+            <span className="bg-neutral-100 text-neutral-600 font-mono text-xs px-2 py-0.5 rounded border border-neutral-200/80">
+              v0.1-deterministic
+            </span>
+          </div>
+
+          {/* Right system status chips */}
+          <div className="hidden sm:flex items-center gap-2 font-mono text-xs text-neutral-500">
+            <span className="bg-neutral-50 border border-neutral-200 px-2 py-0.5 rounded">
+              ENGINE: INTEGER-CENTS
+            </span>
+            <span className="text-neutral-300 select-none">•</span>
+            <span className="bg-neutral-50 border border-neutral-200 px-2 py-0.5 rounded">
+              OCR: GEMINI-3.8-FLASH
+            </span>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </header>
+
+      {/* Error Alert Banner */}
+      {errorBanner && (
+        <div className="bg-rose-50 border-b border-rose-200 px-6 py-2.5 text-xs text-rose-900">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="font-mono font-bold text-rose-700">[{errorBanner.code}]:</span>
+              <span>{errorBanner.message}</span>
+            </div>
+            <button
+              onClick={() => setErrorBanner(null)}
+              className="text-rose-600 hover:text-rose-800 font-mono text-xs cursor-pointer ml-4 underline"
+            >
+              dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 2. Main Layout (Dense Two-Column Workbench) */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column (Ingestion & PO Registry - ~35% width / 4 cols on 12) */}
+        <div className="lg:col-span-4 flex flex-col gap-5">
+          {/* Section Header */}
+          <div className="flex items-center justify-between border-b border-neutral-200 pb-1.5">
+            <h2 className="text-xs uppercase tracking-wider text-neutral-500 font-mono font-semibold">
+              1. SOURCE DOCUMENT & PO BASELINE
+            </h2>
+            <span className="text-[11px] font-mono text-neutral-400">PO-2026-0881</span>
+          </div>
+
+          {/* Action Bar: Primary CTA & Dropzone */}
+          <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-col gap-3">
+            {/* Primary Action Button */}
+            <button
+              onClick={handleRunSample}
+              disabled={isLoading}
+              className="w-full bg-neutral-900 text-white font-medium text-xs py-2.5 px-4 rounded-md hover:bg-neutral-800 active:translate-y-[1px] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <svg className="w-3.5 h-3.5 text-neutral-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              <span>Run Apex Drift Sample</span>
+            </button>
+
+            {/* Divider */}
+            <div className="relative flex items-center justify-center my-1">
+              <div className="border-t border-neutral-200 w-full" />
+              <span className="bg-white px-2 font-mono text-[10px] uppercase text-neutral-400 absolute">or upload</span>
+            </div>
+
+            {/* File Dropzone */}
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-dashed border-neutral-300 hover:border-neutral-400 bg-neutral-50/50 rounded-lg p-5 text-center text-sm cursor-pointer transition-colors ${
+                isDragging ? 'border-neutral-900 bg-neutral-100/70' : ''
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    handleFileSelection(e.target.files[0]);
+                  }
+                }}
+              />
+
+              <div className="text-neutral-500 text-xs">
+                {selectedFile ? (
+                  <div>
+                    <span className="font-mono font-medium text-neutral-900 block truncate">
+                      {selectedFile.name}
+                    </span>
+                    <span className="font-mono text-[11px] text-neutral-500 block mt-0.5">
+                      {(selectedFile.size / 1024).toFixed(1)} KB • {selectedFile.type || 'file'}
+                    </span>
+                  </div>
+                ) : (
+                  <div>
+                    <span className="text-neutral-700 font-medium block">Drop invoice file here</span>
+                    <span className="text-neutral-400 text-[11px] font-mono block mt-0.5">
+                      PNG, JPEG, or PDF
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={handleManualUpload}
+              disabled={!selectedFile || selectedFile.size === 0 || isLoading}
+              className="w-full bg-white border border-neutral-300 text-neutral-800 hover:bg-neutral-50 active:translate-y-[1px] font-medium text-xs py-2 px-3 rounded-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? 'Processing Extraction...' : 'Extract & Reconcile File'}
+            </button>
+          </div>
+
+          {/* Active PO Baseline Card */}
+          <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs">
+            <div className="flex items-center justify-between pb-2.5 border-b border-neutral-200">
+              <span className="font-mono font-bold text-xs text-neutral-900">
+                PO-2026-0881
+              </span>
+              <span className="bg-neutral-100 text-neutral-700 font-mono text-[10px] px-1.5 py-0.5 rounded border border-neutral-200">
+                AUTHORIZED
+              </span>
+            </div>
+
+            {/* Key-Value Block */}
+            <div className="mt-3 space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Vendor:</span>
+                <span className="font-medium text-neutral-900">{activePO.vendor_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Issue Date:</span>
+                <span className="font-mono text-neutral-700">{activePO.issue_date}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Currency:</span>
+                <span className="font-mono text-neutral-700">{activePO.currency}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-neutral-100">
+                <span className="text-neutral-500">Authorized Subtotal:</span>
+                <span className="font-mono text-neutral-900 font-medium">
+                  ${centsToDollars(activePO.subtotal_cents)}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-neutral-500">Tax (1000 bps):</span>
+                <span className="font-mono text-neutral-900 font-medium">
+                  ${centsToDollars(activePO.tax_cents)}
+                </span>
+              </div>
+              <div className="flex justify-between pt-1.5 border-t border-neutral-200 font-semibold">
+                <span className="text-neutral-800">Total:</span>
+                <span className="font-mono text-neutral-900">
+                  ${centsToDollars(activePO.total_cents)}
+                </span>
+              </div>
+            </div>
+
+            {/* 2 Contracted PO Line Items */}
+            <div className="mt-4 pt-3 border-t border-neutral-200">
+              <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block mb-2 font-medium">
+                Contracted Items (2)
+              </span>
+              <div className="space-y-1.5">
+                {activePO.items.map((poItem) => (
+                  <div
+                    key={poItem.sku}
+                    className="p-2 rounded bg-neutral-50 border border-neutral-200/70 text-xs flex items-center justify-between"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <p className="font-medium text-neutral-800 truncate text-[11px] leading-tight">
+                        {poItem.description}
+                      </p>
+                      <p className="font-mono text-[10px] text-neutral-400 mt-0.5">
+                        {poItem.sku} • Qty {poItem.quantity}
+                      </p>
+                    </div>
+                    <span className="font-mono font-medium text-neutral-700 text-[11px] shrink-0">
+                      ${centsToDollars(poItem.unit_price_cents)}/ea
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Column (Reconciliation Ledger - ~65% width / 8 cols on 12) */}
+        <div className="lg:col-span-8 flex flex-col gap-5">
+          {/* Section Header */}
+          <div className="flex items-center justify-between border-b border-neutral-200 pb-1.5">
+            <h2 className="text-xs uppercase tracking-wider text-neutral-500 font-mono font-semibold">
+              2. RECONCILIATION LEDGER & AUDIT TRAIL
+            </h2>
+            {reconciliation && (
+              <span className="text-[11px] font-mono text-neutral-400">
+                Processed via Integer Arithmetic
+              </span>
+            )}
+          </div>
+
+          {/* Loading Indicator */}
+          {isLoading && (
+            <div className="bg-white border border-neutral-200 p-8 rounded-md text-center shadow-xs">
+              <div className="inline-block animate-spin w-5 h-5 border-2 border-neutral-900 border-t-transparent rounded-full mb-3" />
+              <p className="font-mono text-xs font-medium text-neutral-900">
+                Processing Deterministic Reconciliation
+              </p>
+              <p className="font-mono text-[11px] text-neutral-500 mt-1">{loadingText}</p>
+            </div>
+          )}
+
+          {/* Clean Dotted Empty State */}
+          {!reconciliation && !isLoading && (
+            <div className="border border-dashed border-neutral-300 bg-white rounded-md p-12 text-center shadow-xs">
+              <div className="max-w-md mx-auto">
+                <span className="font-mono text-xs text-neutral-400 block mb-1">
+                  NO ACTIVE RECONCILIATION
+                </span>
+                <p className="text-sm font-semibold text-neutral-800 mb-1">
+                  Ready to Reconcile Supplier Invoices
+                </p>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Select an invoice file or click{' '}
+                  <strong className="text-neutral-700">&quot;Run Apex Drift Sample&quot;</strong> on the left to execute
+                  instant OCR extraction and zero-drift verification against baseline Purchase Order PO-2026-0881.
+                </p>
+                <div className="mt-4">
+                  <button
+                    onClick={handleRunSample}
+                    className="inline-flex items-center gap-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-mono text-xs px-3 py-1.5 rounded border border-neutral-300 transition-colors cursor-pointer"
+                  >
+                    <span>Quick Start: Run Sample Now</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Reconciled Ledger Content */}
+          {reconciliation && !isLoading && (
+            <div className="flex flex-col gap-4">
+              {/* Header Row: Document Identifiers & Flat Status Chip */}
+              <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-neutral-500">MATCH:</span>
+                  <span className="font-mono text-xs font-bold text-neutral-900">
+                    {reconciliation.invoice_number}
+                  </span>
+                  <span className="text-neutral-300 font-mono">against</span>
+                  <span className="font-mono text-xs font-bold text-neutral-700">
+                    {reconciliation.po_number}
+                  </span>
+                  <span className="text-neutral-300">•</span>
+                  <span className="text-xs text-neutral-600 font-medium">
+                    {reconciliation.vendor_name}
+                  </span>
+                </div>
+
+                <div>{renderStatusBadge(reconciliation.status)}</div>
+              </div>
+
+              {/* Financial Metric Grid (3 Compact Boxes) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Box 1: Invoiced vs PO Total */}
+                <div className="bg-white border border-neutral-200/80 rounded-md p-3.5 shadow-xs">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block font-medium">
+                    INVOICED VS PO TOTAL
+                  </span>
+                  <div className="mt-1.5 flex items-baseline gap-1.5">
+                    <span className="font-mono text-lg font-bold text-neutral-900 tabular-nums">
+                      ${centsToDollars(invoicedGrandTotalCents)}
+                    </span>
+                    <span className="font-mono text-xs text-neutral-400 tabular-nums">
+                      vs ${centsToDollars(activePO.total_cents)}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] text-neutral-400 block mt-1">
+                    Subtotal: ${centsToDollars(invoicedLineSubtotalCents)} vs ${centsToDollars(activePO.subtotal_cents)}
+                  </span>
+                </div>
+
+                {/* Box 2: Total Drift / Variance */}
+                <div className="bg-white border border-neutral-200/80 rounded-md p-3.5 shadow-xs">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block font-medium">
+                    TOTAL DRIFT / VARIANCE
+                  </span>
+                  <div className="mt-1.5 flex items-baseline gap-1">
+                    <span
+                      className={`font-mono text-lg font-bold tabular-nums ${
+                        grandTotalVarianceCents !== 0 ? 'text-rose-700' : 'text-emerald-700'
+                      }`}
+                    >
+                      {grandTotalVarianceCents > 0 ? '+' : ''}${centsToDollars(grandTotalVarianceCents)}
+                    </span>
+                    <span className="font-mono text-xs text-neutral-400 tabular-nums">
+                      ({grandTotalVarianceCents}¢)
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] text-neutral-400 block mt-1">
+                    Line variance: +${centsToDollars(reconciliation.total_variance_cents)}
+                  </span>
+                </div>
+
+                {/* Box 3: Extraction Confidence */}
+                <div className="bg-white border border-neutral-200/80 rounded-md p-3.5 shadow-xs">
+                  <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block font-medium">
+                    EXTRACTION CONFIDENCE
+                  </span>
+                  <div className="mt-1.5 flex items-baseline gap-1.5">
+                    <span className="font-mono text-lg font-bold text-neutral-900 tabular-nums">
+                      {rawExtraction ? `${Math.round(rawExtraction.extraction_confidence * 100)}%` : '—'}
+                    </span>
+                  </div>
+                  <span className="font-mono text-[10px] text-neutral-500 block mt-1 truncate">
+                    {rawExtraction && rawExtraction.unresolved_ambiguities.length === 0
+                      ? 'Zero visual ambiguities'
+                      : `${rawExtraction?.unresolved_ambiguities.length} ambiguities noted`}
+                  </span>
+                </div>
+              </div>
+
+              {/* Line Item Table (High-Density Spreadsheet Style) */}
+              <div className="bg-white border border-neutral-200/80 rounded-md overflow-hidden shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="table-auto w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-neutral-200 bg-neutral-100/70 text-neutral-600 font-mono text-[11px]">
+                        <th className="py-2 px-3 text-left font-semibold">ITEM DESCRIPTION</th>
+                        <th className="py-2 px-3 text-left font-semibold">PO SKU</th>
+                        <th className="py-2 px-3 text-left font-semibold">STATUS</th>
+                        <th className="py-2 px-3 text-right font-semibold">QTY (INV/PO)</th>
+                        <th className="py-2 px-3 text-right font-semibold">UNIT PRICE (INV/PO)</th>
+                        <th className="py-2 px-3 text-right font-semibold">VARIANCE</th>
+                        <th className="py-2 px-3 text-right font-semibold">LINE TOTAL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reconciliation.line_items.map((line, idx) => {
+                        const hasVariance = line.variance_unit_price_cents !== 0;
+                        return (
+                          <tr
+                            key={idx}
+                            className="border-b border-neutral-200/60 hover:bg-neutral-50/60 transition-colors"
+                          >
+                            <td className="py-2.5 px-3 font-medium text-neutral-900 max-w-xs truncate">
+                              {line.invoice_description}
+                            </td>
+                            <td className="py-2.5 px-3 font-mono text-neutral-500 text-[11px]">
+                              {line.po_sku || '—'}
+                            </td>
+                            <td className="py-2.5 px-3 shrink-0">{renderLineStatus(line.status)}</td>
+                            <td className="py-2.5 px-3 text-right font-mono text-neutral-700 tabular-nums">
+                              {line.invoiced_quantity} / {line.expected_quantity}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono tabular-nums">
+                              <span className={hasVariance ? 'font-semibold text-rose-700' : 'text-neutral-800'}>
+                                ${centsToDollars(line.invoiced_unit_price_cents)}
+                              </span>{' '}
+                              <span className="text-neutral-400 text-[10px]">
+                                / ${centsToDollars(line.expected_unit_price_cents)}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-right">
+                              {hasVariance ? (
+                                <span className="bg-rose-50 text-rose-700 font-mono font-medium text-[11px] px-1.5 py-0.5 rounded border border-rose-200/60 tabular-nums">
+                                  {line.variance_unit_price_cents > 0 ? '+' : ''}$
+                                  {centsToDollars(line.variance_unit_price_cents)}
+                                </span>
+                              ) : (
+                                <span className="font-mono text-neutral-400 tabular-nums">$0.00</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-semibold text-neutral-900 tabular-nums">
+                              ${centsToDollars(line.invoiced_line_total_cents)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Unmatched Contract Lines if any */}
+              {reconciliation.unmatched_po_items.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-md p-3 text-xs">
+                  <span className="font-mono font-bold text-amber-800 uppercase text-[11px] block mb-1.5">
+                    Unmatched Contract Items on PO ({reconciliation.unmatched_po_items.length})
+                  </span>
+                  <div className="space-y-1">
+                    {reconciliation.unmatched_po_items.map((item) => (
+                      <div
+                        key={item.sku}
+                        className="flex justify-between items-center bg-white p-2 rounded border border-amber-200/60"
+                      >
+                        <span className="font-medium text-neutral-800">
+                          {item.description} ({item.sku}) • Qty: {item.quantity}
+                        </span>
+                        <span className="font-mono text-neutral-700 font-semibold">
+                          ${centsToDollars(item.total_cents)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Audit Trail Box */}
+              <div className="bg-neutral-50 border border-neutral-200 p-3 rounded-md font-mono text-xs text-neutral-700 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-neutral-200/80 mb-2">
+                  <span className="text-[11px] font-bold text-neutral-600 uppercase tracking-wider">
+                    AUDIT TRAIL ({reconciliation.audit_notes.length} NOTES)
+                  </span>
+                  <span className="text-[10px] text-neutral-400">TRACE ID: LOG-{activePO.po_number}</span>
+                </div>
+
+                <div className="space-y-1">
+                  {reconciliation.audit_notes.length === 0 ? (
+                    <p className="text-neutral-400 text-[11px] italic">No anomalies logged by reconciliation engine.</p>
+                  ) : (
+                    reconciliation.audit_notes.map((note, idx) => (
+                      <div key={idx} className="flex items-start gap-1.5 text-[11px] leading-relaxed">
+                        <span className="text-neutral-400 select-none">&gt;</span>
+                        <span>{note}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
+
+      {/* Footer */}
+      <footer className="border-t border-neutral-200 bg-white py-3 px-6 text-center text-xs font-mono text-neutral-400">
+        ClearMatch • Integer-Cent Math • Deterministic Reconciliation
+      </footer>
     </div>
   );
 }
