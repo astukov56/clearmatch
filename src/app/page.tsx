@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { centsToDollars, dollarsToCents } from '../lib/money';
+import React, { useState, useRef, useCallback } from 'react';
+import { centsToDollars } from '../lib/money';
 import {
   ReconciliationResult,
   ReconciledLineItem,
@@ -39,8 +39,9 @@ interface ReconcileApiResponse {
 }
 
 /**
- * Helper using an offscreen <canvas> (800x600, white background, black monospace text)
+ * Helper using an offscreen <canvas> (1000x700, white background, black monospace text)
  * that draws a realistic invoice matching fixtures/invoice_sample_01_drift.json.
+ * 1000px canvas width ensures long line items like "Total: $129.50" are never clipped.
  */
 export async function generateSampleInvoicePng(): Promise<File> {
   return new Promise((resolve, reject) => {
@@ -50,8 +51,8 @@ export async function generateSampleInvoicePng(): Promise<File> {
     }
 
     const canvas = document.createElement('canvas');
-    canvas.width = 800;
-    canvas.height = 600;
+    canvas.width = 1000;
+    canvas.height = 700;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -61,43 +62,63 @@ export async function generateSampleInvoicePng(): Promise<File> {
 
     // White background
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 800, 600);
+    ctx.fillRect(0, 0, 1000, 700);
+
+    // Document border
+    ctx.strokeStyle = '#e4e4e7';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 20, 960, 660);
 
     // Black monospace text
     ctx.fillStyle = '#000000';
     ctx.textBaseline = 'top';
 
     // Header: "INVOICE: INV-99412 | PO: PO-2026-0881"
-    ctx.font = 'bold 20px monospace';
-    ctx.fillText('INVOICE: INV-99412 | PO: PO-2026-0881', 40, 50);
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('INVOICE: INV-99412 | PO: PO-2026-0881', 50, 50);
 
     // Vendor: "Apex Industrial Supplies"
     ctx.font = '16px monospace';
-    ctx.fillText('Vendor: Apex Industrial Supplies', 40, 110);
+    ctx.fillText('Vendor: Apex Industrial Supplies', 50, 110);
 
     // Date: "2026-10-14 | Currency: USD"
-    ctx.fillText('Date: 2026-10-14 | Currency: USD', 40, 140);
+    ctx.fillText('Date: 2026-10-14 | Currency: USD', 50, 145);
+
+    // Divider
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(50, 185);
+    ctx.lineTo(950, 185);
+    ctx.stroke();
 
     // Line 1: "Industrial Hex Bolts M8 (Box of 100) | Qty: 10 | Unit Price: $12.95 | Total: $129.50"
+    ctx.font = '15px monospace';
     ctx.fillText(
       'Line 1: Industrial Hex Bolts M8 (Box of 100) | Qty: 10 | Unit Price: $12.95 | Total: $129.50',
-      40,
-      210
+      50,
+      220
     );
 
     // Line 2: "Sealed Ball Bearings 22mm | Qty: 4 | Unit Price: $45.00 | Total: $180.00"
     ctx.fillText(
       'Line 2: Sealed Ball Bearings 22mm | Qty: 4 | Unit Price: $45.00 | Total: $180.00',
-      40,
-      250
+      50,
+      265
     );
+
+    // Divider
+    ctx.beginPath();
+    ctx.moveTo(50, 315);
+    ctx.lineTo(950, 315);
+    ctx.stroke();
 
     // Footer: "Subtotal: $309.50 | Tax (10%): $30.95 | Total: $340.45"
     ctx.font = 'bold 16px monospace';
     ctx.fillText(
       'Footer: Subtotal: $309.50 | Tax (10%): $30.95 | Total: $340.45',
-      40,
-      330
+      50,
+      345
     );
 
     canvas.toBlob((blob) => {
@@ -125,27 +146,74 @@ export default function ClearMatchOperatorWorkbench() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    let isMounted = true;
-    generateSampleInvoicePng()
-      .then((file) => {
-        if (isMounted) {
-          setSelectedFile(file);
+  const executeReconciliation = useCallback(
+    async (fileToSubmit: File, isSample = false) => {
+      setIsLoading(true);
+      setErrorBanner(null);
+      setLoadingText(
+        isSample
+          ? 'Loading synthetic payload & reconciling against baseline PO...'
+          : 'Running Gemini 3.8 Flash OCR entity extraction...'
+      );
+
+      try {
+        const formData = new FormData();
+        formData.append('file', fileToSubmit);
+        formData.append('po_id', activePO.id);
+        if (isSample) {
+          formData.append('sample', 'true');
         }
-      })
-      .catch((err) => {
-        console.error('Failed to initialize sample invoice PNG:', err);
-      });
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+        const response = await fetch('/api/reconcile', {
+          method: 'POST',
+          body: formData,
+        });
 
-  const handleFileSelection = useCallback((file: File) => {
-    setSelectedFile(file);
-    setErrorBanner(null);
-  }, []);
+        const result = (await response.json()) as ReconcileApiResponse;
+
+        if (!response.ok || !result.success || !result.data) {
+          const code = result.error?.code || `HTTP_${response.status}`;
+          const message =
+            result.error?.message || 'Reconciliation service encountered an unexpected error.';
+          setErrorBanner({ code, message });
+          return;
+        }
+
+        setReconciliation(result.data.reconciliation);
+        setRawExtraction(result.data.raw_extraction);
+      } catch (err) {
+        setErrorBanner({
+          code: 'NETWORK_ERROR',
+          message:
+            err instanceof Error ? err.message : 'Unable to connect to reconciliation API endpoint.',
+        });
+      } finally {
+        setIsLoading(false);
+        setLoadingText('');
+      }
+    },
+    []
+  );
+
+  const handleFileSelection = useCallback(
+    (file: File) => {
+      setSelectedFile(file);
+      setReconciliation(null);
+      setRawExtraction(null);
+      setErrorBanner(null);
+
+      if (file.size === 0) {
+        setErrorBanner({
+          code: 'EMPTY_FILE',
+          message: 'Uploaded file is empty (0 bytes).',
+        });
+        return;
+      }
+
+      executeReconciliation(file, false);
+    },
+    [executeReconciliation]
+  );
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -165,56 +233,12 @@ export default function ClearMatchOperatorWorkbench() {
     }
   };
 
-  const executeReconciliation = async (fileToSubmit: File, isSample = false) => {
-    setIsLoading(true);
-    setErrorBanner(null);
-    setLoadingText(
-      isSample
-        ? 'Loading synthetic payload & reconciling against baseline PO...'
-        : 'Running Gemini 3.8 Flash OCR entity extraction...'
-    );
-
-    try {
-      const formData = new FormData();
-      formData.append('file', fileToSubmit);
-      formData.append('po_id', activePO.id);
-      if (isSample) {
-        formData.append('sample', 'true');
-      }
-
-      const response = await fetch('/api/reconcile', {
-        method: 'POST',
-        body: formData,
-      });
-
-      const result = (await response.json()) as ReconcileApiResponse;
-
-      if (!response.ok || !result.success || !result.data) {
-        const code = result.error?.code || `HTTP_${response.status}`;
-        const message = result.error?.message || 'Reconciliation service encountered an unexpected error.';
-        setErrorBanner({ code, message });
-        return;
-      }
-
-      setReconciliation(result.data.reconciliation);
-      setRawExtraction(result.data.raw_extraction);
-    } catch (err) {
-      setErrorBanner({
-        code: 'NETWORK_ERROR',
-        message: err instanceof Error ? err.message : 'Unable to connect to reconciliation API endpoint.',
-      });
-    } finally {
-      setIsLoading(false);
-      setLoadingText('');
-    }
-  };
-
   const handleRunSample = async () => {
-    const sampleFile =
-      selectedFile && selectedFile.size > 0
-        ? selectedFile
-        : await generateSampleInvoicePng();
-    setSelectedFile(sampleFile);
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    const sampleFile = await generateSampleInvoicePng();
     executeReconciliation(sampleFile, true);
   };
 
@@ -223,17 +247,13 @@ export default function ClearMatchOperatorWorkbench() {
     executeReconciliation(selectedFile, false);
   };
 
-  // Compute invoiced subtotal in integer cents deterministically from line items
-  const invoicedLineSubtotalCents = reconciliation
-    ? reconciliation.line_items.reduce((sum, item) => sum + item.invoiced_line_total_cents, 0)
+  // Invoiced subtotal in integer cents deterministically from reconciliation
+  const invoicedSubtotalCents = reconciliation
+    ? reconciliation.invoiced_subtotal_cents ??
+      reconciliation.line_items.reduce((sum, item) => sum + item.invoiced_line_total_cents, 0)
     : 0;
 
-  // Compute invoiced grand total in integer cents (using raw_grand_total if present or subtotal)
-  const invoicedGrandTotalCents = rawExtraction?.raw_grand_total
-    ? dollarsToCents(rawExtraction.raw_grand_total)
-    : invoicedLineSubtotalCents;
-
-  const grandTotalVarianceCents = invoicedGrandTotalCents - activePO.total_cents;
+  const totalVarianceCents = reconciliation ? reconciliation.total_variance_cents : 0;
 
   const renderStatusBadge = (status: ReconciliationStatus) => {
     switch (status) {
@@ -362,6 +382,9 @@ export default function ClearMatchOperatorWorkbench() {
                 type="file"
                 accept="image/png,image/jpeg,application/pdf"
                 className="hidden"
+                onClick={(e) => {
+                  (e.currentTarget as HTMLInputElement).value = '';
+                }}
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
                     handleFileSelection(e.target.files[0]);
@@ -393,9 +416,16 @@ export default function ClearMatchOperatorWorkbench() {
             <button
               onClick={handleManualUpload}
               disabled={!selectedFile || selectedFile.size === 0 || isLoading}
-              className="w-full bg-white border border-neutral-300 text-neutral-800 hover:bg-neutral-50 active:translate-y-[1px] font-medium text-xs py-2 px-3 rounded-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 ${
+                selectedFile && selectedFile.size > 0 && !isLoading
+                  ? 'bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-900 shadow-sm cursor-pointer active:translate-y-[1px]'
+                  : 'bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed'
+              }`}
             >
-              {isLoading ? 'Processing Extraction...' : 'Extract & Reconcile File'}
+              {isLoading && (
+                <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              )}
+              <span>{isLoading ? 'Processing Extraction...' : 'Extract & Reconcile File'}</span>
             </button>
           </div>
 
@@ -550,21 +580,21 @@ export default function ClearMatchOperatorWorkbench() {
 
               {/* Financial Metric Grid (3 Compact Boxes) */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Box 1: Invoiced vs PO Total */}
+                {/* Box 1: Invoiced vs PO Subtotal */}
                 <div className="bg-white border border-neutral-200/80 rounded-md p-3.5 shadow-xs">
                   <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block font-medium">
-                    INVOICED VS PO TOTAL
+                    INVOICED VS PO SUBTOTAL
                   </span>
                   <div className="mt-1.5 flex items-baseline gap-1.5">
                     <span className="font-mono text-lg font-bold text-neutral-900 tabular-nums">
-                      ${centsToDollars(invoicedGrandTotalCents)}
+                      ${centsToDollars(invoicedSubtotalCents)}
                     </span>
                     <span className="font-mono text-xs text-neutral-400 tabular-nums">
-                      vs ${centsToDollars(activePO.total_cents)}
+                      vs ${centsToDollars(activePO.subtotal_cents)}
                     </span>
                   </div>
                   <span className="font-mono text-[10px] text-neutral-400 block mt-1">
-                    Subtotal: ${centsToDollars(invoicedLineSubtotalCents)} vs ${centsToDollars(activePO.subtotal_cents)}
+                    Pre-tax subtotal baseline ({activePO.currency})
                   </span>
                 </div>
 
@@ -576,17 +606,19 @@ export default function ClearMatchOperatorWorkbench() {
                   <div className="mt-1.5 flex items-baseline gap-1">
                     <span
                       className={`font-mono text-lg font-bold tabular-nums ${
-                        grandTotalVarianceCents !== 0 ? 'text-rose-700' : 'text-emerald-700'
+                        totalVarianceCents !== 0 ? 'text-rose-700' : 'text-emerald-700'
                       }`}
                     >
-                      {grandTotalVarianceCents > 0 ? '+' : ''}${centsToDollars(grandTotalVarianceCents)}
+                      {totalVarianceCents > 0 ? '+' : ''}${centsToDollars(totalVarianceCents)}
                     </span>
                     <span className="font-mono text-xs text-neutral-400 tabular-nums">
-                      ({grandTotalVarianceCents}¢)
+                      ({totalVarianceCents > 0 ? '+' : ''}{totalVarianceCents}¢)
                     </span>
                   </div>
                   <span className="font-mono text-[10px] text-neutral-400 block mt-1">
-                    Line variance: +${centsToDollars(reconciliation.total_variance_cents)}
+                    {totalVarianceCents === 0
+                      ? 'Exact zero-drift match'
+                      : `Pre-tax variance: ${totalVarianceCents > 0 ? '+' : ''}${centsToDollars(totalVarianceCents)}`}
                   </span>
                 </div>
 

@@ -52,6 +52,7 @@ export interface ReconciliationResult {
   vendor_name: string;
   status: ReconciliationStatus;
   total_variance_cents: number;
+  invoiced_subtotal_cents: number;
   line_items: ReconciledLineItem[];
   unmatched_po_items: POLineItem[];
   audit_notes: string[];
@@ -279,6 +280,7 @@ export function reconcile(
     vendor_name: po.vendor_name,
     status: overallStatus,
     total_variance_cents: totalVarianceCents,
+    invoiced_subtotal_cents: invoicedSubtotalCents,
     line_items: reconciledLineItems,
     unmatched_po_items: remainingPOItems,
     audit_notes: auditNotes,

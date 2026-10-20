@@ -15,7 +15,10 @@ describe('reconcile (ClearMatch Domain Reconciliation)', () => {
     expect(result.invoice_number).toBe('INV-99412');
     expect(result.vendor_name).toBe('Apex Industrial Supplies');
     expect(result.status).toBe('FLAGGED_DRIFT');
+    expect(result.invoiced_subtotal_cents).toBe(30950);
     expect(result.total_variance_cents).toBe(450); // (12.95 - 12.50) * 10 = +450 cents
+    expect(result.total_variance_cents).toBe(result.invoiced_subtotal_cents - samplePO.subtotal_cents);
+    expect(result.total_variance_cents).not.toBe(result.invoiced_subtotal_cents - samplePO.total_cents);
     expect(result.unmatched_po_items).toHaveLength(0);
     expect(result.line_items).toHaveLength(2);
 
@@ -74,6 +77,7 @@ describe('reconcile (ClearMatch Domain Reconciliation)', () => {
     const result = reconcile(samplePO, perfectInvoice);
 
     expect(result.status).toBe('APPROVED');
+    expect(result.invoiced_subtotal_cents).toBe(30500);
     expect(result.total_variance_cents).toBe(0);
     expect(result.line_items.every((item) => item.status === 'MATCH')).toBe(true);
     expect(result.unmatched_po_items).toHaveLength(0);
