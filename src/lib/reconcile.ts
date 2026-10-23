@@ -44,7 +44,8 @@ export interface ReconciledLineItem {
 export type ReconciliationStatus = 
   | 'APPROVED' 
   | 'FLAGGED_DRIFT' 
-  | 'REQUIRES_MANUAL_REVIEW';
+  | 'REQUIRES_MANUAL_REVIEW'
+  | 'APPROVED_WITH_OVERRIDE';
 
 export interface ReconciliationResult {
   po_number: string;

@@ -9,6 +9,9 @@ import {
   POLineItem,
 } from '../lib/reconcile';
 import { ExtractedInvoice } from '../lib/extraction/schemas';
+import { exportReconciliationToCSV, exportAuditProofJSON } from '../lib/utils/export';
+import { generateDisputeNotice } from '../lib/utils/disputeNotice';
+import DisputeModal from '../components/DisputeModal';
 import samplePOJson from '../../fixtures/po_sample_01.json';
 
 interface POFixture {
@@ -144,6 +147,11 @@ export default function ClearMatchOperatorWorkbench() {
 
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [rawExtraction, setRawExtraction] = useState<ExtractedInvoice | null>(null);
+  const [isDisputeModalOpen, setIsDisputeModalOpen] = useState(false);
+  const [isOverrideInputOpen, setIsOverrideInputOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState(
+    'Variance within acceptable commercial tolerance (<$1.00)'
+  );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -205,6 +213,8 @@ export default function ClearMatchOperatorWorkbench() {
       setReconciliation(null);
       setRawExtraction(null);
       setErrorBanner(null);
+      setIsOverrideInputOpen(false);
+      setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
 
       if (file.size === 0) {
         setErrorBanner({
@@ -222,11 +232,21 @@ export default function ClearMatchOperatorWorkbench() {
         });
         return;
       }
-
-      executeReconciliation(file, false);
     },
-    [executeReconciliation]
+    []
   );
+
+  const handleClearFile = useCallback(() => {
+    setSelectedFile(null);
+    setReconciliation(null);
+    setRawExtraction(null);
+    setErrorBanner(null);
+    setIsOverrideInputOpen(false);
+    setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -248,6 +268,8 @@ export default function ClearMatchOperatorWorkbench() {
 
   const handleRunBenchmark = async (scenario: 'verified_match' | 'float_trap' | 'ocr_guardrail') => {
     setSelectedFile(null);
+    setIsOverrideInputOpen(false);
+    setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -255,10 +277,80 @@ export default function ClearMatchOperatorWorkbench() {
     executeReconciliation(sampleFile, true, scenario);
   };
 
-  const handleManualUpload = () => {
-    if (!selectedFile || selectedFile.size === 0) return;
+  const handleManualUpload = useCallback(() => {
+    if (!selectedFile) return;
+    if (selectedFile.size === 0) {
+      setErrorBanner({
+        code: 'EMPTY_FILE',
+        message: 'Uploaded file is empty (0 bytes).',
+      });
+      return;
+    }
+    const MAX_FILE_SIZE = 4 * 1024 * 1024;
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setErrorBanner({
+        code: 'FILE_TOO_LARGE',
+        message: 'Uploaded file exceeds the maximum allowed size of 4.0 MB.',
+      });
+      return;
+    }
     executeReconciliation(selectedFile, false);
-  };
+  }, [selectedFile, executeReconciliation]);
+
+  const isFileValid = Boolean(
+    selectedFile && selectedFile.size > 0 && selectedFile.size <= 4 * 1024 * 1024
+  );
+
+  const handleExportCSV = useCallback(() => {
+    if (!reconciliation) return;
+    exportReconciliationToCSV(
+      reconciliation,
+      reconciliation.po_number || activePO.po_number,
+      reconciliation.invoice_number || 'INV-UNKNOWN',
+      {
+        poSubtotalCents: activePO.subtotal_cents,
+        traceId: `LOG-${reconciliation.po_number || activePO.po_number}`,
+      }
+    );
+  }, [reconciliation]);
+
+  const handleExportAuditProof = useCallback(() => {
+    if (!reconciliation) return;
+    const traceId = `LOG-${reconciliation.po_number || activePO.po_number}`;
+    exportAuditProofJSON(
+      rawExtraction,
+      reconciliation,
+      traceId,
+      reconciliation.invoice_number || 'INV-UNKNOWN'
+    );
+  }, [reconciliation, rawExtraction]);
+
+  const handleToggleOverrideInput = useCallback(() => {
+    if (!reconciliation) return;
+    if (
+      reconciliation.status === 'APPROVED_WITH_OVERRIDE' ||
+      reconciliation.status === 'APPROVED'
+    ) {
+      return;
+    }
+    setIsOverrideInputOpen((prev) => !prev);
+  }, [reconciliation]);
+
+  const handleConfirmOverride = useCallback(() => {
+    if (!reconciliation) return;
+    const trimmedReason = overrideReason.trim();
+    if (!trimmedReason) return;
+
+    const isoTimestamp = new Date().toISOString();
+    const overrideAuditEntry = `[HUMAN_OVERRIDE] Approved by operator: "${trimmedReason}" (${isoTimestamp})`;
+
+    setReconciliation({
+      ...reconciliation,
+      status: 'APPROVED_WITH_OVERRIDE',
+      audit_notes: [...reconciliation.audit_notes, overrideAuditEntry],
+    });
+    setIsOverrideInputOpen(false);
+  }, [reconciliation, overrideReason]);
 
   // Invoiced subtotal in integer cents deterministically from reconciliation
   const invoicedSubtotalCents = reconciliation
@@ -286,6 +378,12 @@ export default function ClearMatchOperatorWorkbench() {
         return (
           <span className="bg-amber-100 text-amber-800 border border-amber-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
             MANUAL REVIEW
+          </span>
+        );
+      case 'APPROVED_WITH_OVERRIDE':
+        return (
+          <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
+            OVERRIDE APPROVED
           </span>
         );
     }
@@ -509,21 +607,76 @@ export default function ClearMatchOperatorWorkbench() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleManualUpload}
-              disabled={!selectedFile || selectedFile.size === 0 || isLoading}
-              className={`w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 ${
-                selectedFile && selectedFile.size > 0 && !isLoading
-                  ? 'bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-900 shadow-sm cursor-pointer active:translate-y-[1px]'
-                  : 'bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed'
-              }`}
-            >
-              {isLoading && (
+            {/* Primary Action Button State Machine */}
+            {isLoading ? (
+              <button
+                type="button"
+                disabled
+                className="w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed"
+              >
                 <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              )}
-              <span>{isLoading ? 'Processing Extraction...' : 'Extract & Reconcile File'}</span>
-            </button>
+                <span>Extracting &amp; Computing...</span>
+              </button>
+            ) : reconciliation && selectedFile ? (
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualUpload}
+                  disabled={!isFileValid}
+                  className="w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 bg-white hover:bg-neutral-50 text-neutral-700 border border-neutral-300 shadow-xs cursor-pointer active:translate-y-[1px]"
+                >
+                  <span>Re-run Ingestion</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearFile}
+                  className="w-full text-center text-xs font-mono text-neutral-500 hover:text-neutral-800 transition-colors py-1 cursor-pointer"
+                >
+                  Clear / Upload New Invoice
+                </button>
+              </div>
+            ) : selectedFile ? (
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={handleManualUpload}
+                  disabled={!isFileValid}
+                  className={`w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 ${
+                    isFileValid
+                      ? 'bg-neutral-900 text-white hover:bg-neutral-800 border border-neutral-900 shadow-sm cursor-pointer active:translate-y-[1px]'
+                      : 'bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed'
+                  }`}
+                >
+                  <span>Extract &amp; Reconcile File</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearFile}
+                  className="w-full text-center text-xs font-mono text-neutral-500 hover:text-neutral-800 transition-colors py-1 cursor-pointer"
+                >
+                  Clear Selected File
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled
+                  className="w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed"
+                >
+                  <span>Extract &amp; Reconcile File</span>
+                </button>
+                {reconciliation && (
+                  <button
+                    type="button"
+                    onClick={handleClearFile}
+                    className="w-full text-center text-xs font-mono text-neutral-500 hover:text-neutral-800 transition-colors py-1 cursor-pointer"
+                  >
+                    Clear / Upload New Invoice
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Active PO Baseline Card */}
@@ -630,16 +783,41 @@ export default function ClearMatchOperatorWorkbench() {
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              {reconciliation ? (
-                <span className="text-[11px] font-mono text-neutral-500">
+            {/* Client-Side Audit & ERP Export Utility Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              {reconciliation && (
+                <span className="hidden sm:inline-block text-[11px] font-mono text-neutral-500 mr-1">
                   STATUS: <strong className="text-neutral-800">{reconciliation.status}</strong>
                 </span>
-              ) : (
-                <span className="text-[11px] font-mono text-neutral-400">
-                  Integer Arithmetic Engine
-                </span>
               )}
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                disabled={!reconciliation || isLoading}
+                title={
+                  reconciliation
+                    ? 'Export structured ERP-ready reconciliation CSV'
+                    : 'Export disabled: No active reconciliation result'
+                }
+                className="inline-flex items-center gap-1.5 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 font-mono text-xs px-2.5 py-1 rounded shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <span className="text-neutral-500">⬇</span>
+                <span>Export CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExportAuditProof}
+                disabled={!reconciliation || isLoading}
+                title={
+                  reconciliation
+                    ? 'Download complete cryptographic audit proof JSON'
+                    : 'Export disabled: No active reconciliation result'
+                }
+                className="inline-flex items-center gap-1.5 bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-900 font-mono text-xs px-2.5 py-1 rounded shadow-xs transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <span className="text-neutral-400">⬇</span>
+                <span>Download Audit Proof (JSON)</span>
+              </button>
             </div>
           </div>
 
@@ -887,6 +1065,108 @@ export default function ClearMatchOperatorWorkbench() {
                   )}
                 </div>
               </div>
+
+              {/* Reconciliation Workflow Actions Toolbar */}
+              <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <span className="font-mono text-xs font-bold text-neutral-900 block">
+                      OPERATOR WORKFLOW ACTIONS
+                    </span>
+                    <span className="font-mono text-[11px] text-neutral-500 block">
+                      Execute vendor dispute resolution notice or record authorized audit override
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsDisputeModalOpen(true)}
+                      className={`inline-flex items-center gap-2 font-mono text-xs px-3.5 py-2 rounded font-semibold transition-all shadow-xs cursor-pointer ${
+                        reconciliation.status === 'FLAGGED_DRIFT' ||
+                        reconciliation.status === 'REQUIRES_MANUAL_REVIEW'
+                          ? 'bg-neutral-900 hover:bg-neutral-800 text-white border border-neutral-900 active:translate-y-[1px]'
+                          : 'bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300'
+                      }`}
+                    >
+                      <span>⚠️</span>
+                      <span>Generate Vendor Dispute Notice</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleToggleOverrideInput}
+                      disabled={
+                        reconciliation.status === 'APPROVED_WITH_OVERRIDE' ||
+                        reconciliation.status === 'APPROVED'
+                      }
+                      className={`inline-flex items-center gap-2 font-mono text-xs px-3.5 py-2 rounded font-semibold transition-all shadow-xs ${
+                        reconciliation.status === 'APPROVED_WITH_OVERRIDE'
+                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 cursor-not-allowed opacity-90'
+                          : reconciliation.status === 'APPROVED'
+                          ? 'bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed opacity-60'
+                          : isOverrideInputOpen
+                          ? 'bg-neutral-100 text-neutral-800 border border-neutral-400 cursor-pointer'
+                          : 'bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 cursor-pointer active:translate-y-[1px]'
+                      }`}
+                    >
+                      <span>{reconciliation.status === 'APPROVED_WITH_OVERRIDE' ? '✓' : '🛡️'}</span>
+                      <span>
+                        {reconciliation.status === 'APPROVED_WITH_OVERRIDE'
+                          ? 'Variance Approved (Override)'
+                          : reconciliation.status === 'APPROVED'
+                          ? 'Fully Matched ($0.00 Variance)'
+                          : 'Accept & Approve Variance'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Compact Inline Operator Override Form */}
+                {isOverrideInputOpen && reconciliation.status !== 'APPROVED_WITH_OVERRIDE' && (
+                  <div className="mt-1 pt-3 border-t border-neutral-200/80 bg-neutral-50 -mx-4 -mb-4 p-3.5 rounded-b-md">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleConfirmOverride();
+                      }}
+                      className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
+                    >
+                      <label
+                        htmlFor="operator-override-reason"
+                        className="font-mono text-xs font-bold text-neutral-800 whitespace-nowrap"
+                      >
+                        Operator Override Reason:
+                      </label>
+                      <input
+                        id="operator-override-reason"
+                        type="text"
+                        value={overrideReason}
+                        onChange={(e) => setOverrideReason(e.target.value)}
+                        placeholder="Variance within acceptable commercial tolerance (<$1.00)"
+                        required
+                        className="flex-1 font-mono text-xs px-3 py-1.5 bg-white border border-neutral-300 rounded focus:outline-hidden focus:ring-1 focus:ring-neutral-900 focus:border-neutral-900 shadow-xs"
+                      />
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="submit"
+                          disabled={!overrideReason.trim()}
+                          className="font-mono text-xs px-3.5 py-1.5 rounded bg-emerald-700 hover:bg-emerald-800 text-white font-semibold transition-colors shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Confirm Override
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsOverrideInputOpen(false)}
+                          className="font-mono text-xs px-3 py-1.5 rounded bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 transition-colors shadow-xs cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1083,6 +1363,21 @@ export default function ClearMatchOperatorWorkbench() {
       <footer className="border-t border-neutral-200 bg-white py-3 px-6 text-center text-xs font-mono text-neutral-400">
         ClearMatch • Integer-Cent Math • Deterministic Reconciliation
       </footer>
+
+      {/* Vendor Dispute Memo Modal */}
+      {reconciliation && (
+        <DisputeModal
+          isOpen={isDisputeModalOpen}
+          onClose={() => setIsDisputeModalOpen(false)}
+          noticeText={generateDisputeNotice(
+            reconciliation,
+            reconciliation.po_number || activePO.po_number
+          )}
+          invoiceNumber={reconciliation.invoice_number}
+          poNumber={reconciliation.po_number || activePO.po_number}
+          vendorName={reconciliation.vendor_name}
+        />
+      )}
     </div>
   );
 }

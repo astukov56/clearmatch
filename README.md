@@ -1,11 +1,11 @@
 # ClearMatch
 
-> **Deterministic Invoice & Purchase Order Reconciliation Engine**
+> **Deterministic Invoice & Purchase Order Reconciliation Engine (`v0.1-deterministic`)**
 
 [![Status: Work in Progress](https://img.shields.io/badge/status-work--in--progress-orange.svg)](https://github.com/astukov56/clearmatch)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16.4-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-vitest%20passing-brightgreen.svg)](https://vitest.dev/)
+[![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen.svg)](https://vitest.dev/)
 
 ---
 
@@ -18,11 +18,51 @@
 
 ## Overview
 
-**ClearMatch** is an automated accounts payable reconciliation system designed to solve invoice drift, phantom charges, and quantity mismatches between vendor invoices and purchase orders (POs).
+**ClearMatch** is an automated accounts payable reconciliation engine designed to eliminate invoice drift, phantom rate creep, and quantity mismatches between vendor invoices and contracted purchase orders (POs).
 
-Unlike traditional solutions that rely on fuzzy LLM summaries or brittle regex parsers, ClearMatch enforces a **strict deterministic split**:
-- **Multimodal AI (Gemini 3.8 Flash)** performs entity extraction and optical character recognition (OCR) directly from document images and PDFs.
-- **Pure TypeScript Domain Logic** performs 100% of the mathematical calculations, tax verifications, discrepancy detections, and tolerance checks.
+### The Core Architectural Thesis
+
+ClearMatch rejects the fragile pattern of delegating financial calculations, rounding, or balance verification to probabilistic LLMs. Instead, the platform establishes an unyielding **Trust Boundary**:
+
+- **Perception vs. Execution:** Gemini 3.8 Flash is strictly isolated as an untrusted perception layer validated via Zod runtime schemas (`ExtractedInvoiceSchema`). It is prohibited from performing arithmetic.
+- **Deterministic Accounting:** All unit price comparisons, line totals, tax basis points, and drift calculations execute in pure TypeScript using integer cents (`src/lib/money.ts` and `src/lib/reconcile.ts`) to prevent IEEE-754 floating-point drift.
+
+```text
+[ Document Image / PDF ]
+           │
+           ▼
+┌───────────────────────────────────────────────┐
+│  UNTRUSTED PERCEPTION LAYER                   │
+│  Gemini 3.8 Flash Vision OCR                  │
+│  • Entity extraction only (text, rates, qty)  │
+│  • Zero arithmetic, zero hallucinated totals  │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│  RUNTIME VALIDATION & GUARDRAILS              │
+│  Zod Schema Validation (ExtractedInvoice)     │
+│  Confidence scoring & ambiguity reporting     │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│  TRUSTED DETERMINISTIC EXECUTION              │
+│  Pure TypeScript Financial Engine             │
+│  • Integer-cent math (zero float operations)  │
+│  • Basis-point tax calculations (bps)         │
+│  • Deterministic line-item reconciliation     │
+└──────────────────────┬────────────────────────┘
+                       │
+                       ▼
+┌───────────────────────────────────────────────┐
+│  AUDIT PROOF & OPERATOR COMPLIANCE            │
+│  • RFC 4180 ERP-ready CSV export              │
+│  • Cryptographic JSON Audit Proof             │
+│  • Itemized Commercial Dispute Notices (.txt) │
+│  • Human-in-the-loop variance approval        │
+└───────────────────────────────────────────────┘
+```
 
 ---
 
@@ -55,13 +95,15 @@ ClearMatch adheres to four strict architectural rules:
 | Feature | Status | Notes |
 | :--- | :---: | :--- |
 | **Integer Currency Math Library** | ✅ Complete | Zero floating point, integer cents, basis points rounding (`src/lib/money.ts`) |
-| **Deterministic Reconciliation Engine** | ✅ Complete | Line item matching, unit rate variance, quantity drift (`src/lib/reconcile.ts`) |
-| **Gemini 3.8 Flash Vision OCR** | ✅ Complete | Multimodal entity extraction with structured output & Zod validation |
-| **Reconciliation API Route** | ✅ Complete | `/api/reconcile` supports direct file uploads (PNG, JPEG, PDF) & JSON payloads |
-| **Utilitarian Workbench UI** | 🔄 In Progress | Split-view PO vs. Invoice inspector, synthetic canvas invoice generator |
-| **Supabase Integration & Persistence** | 🔄 In Progress | PO storage, reconciliation audit logs, historical tracking |
-| **Multi-page & Batch Ingestion** | 📋 Planned | Asynchronous queue worker for high-volume invoice batches |
-| **Configurable Tolerance Policies** | 📋 Planned | Organization-level and vendor-specific variance thresholds |
+| **Deterministic Reconciliation Engine** | ✅ Complete | Line item matching, unit rate variance, quantity drift, 49 passing unit/route tests (`src/lib/reconcile.ts`) |
+| **Gemini 3.8 Flash Vision OCR** | ✅ Complete | Multimodal entity extraction with structured output, confidence guardrails & Zod validation |
+| **Reconciliation API & FinOps Guards** | ✅ Complete | `/api/reconcile` supports PDF/PNG/JPEG uploads with payload size (4MB), line-item (50), and token guards |
+| **Utilitarian Workbench UI** | ✅ Complete | Staged upload state machine, Reinforced Ledger vs. raw Trust Boundary inspector, instant architecture benchmarks |
+| **Compliance & ERP Audit Exports** | ✅ Complete | Client-side ERP CSV export and cryptographic-style JSON Audit Proofs (`untrustedVlmExtraction` + `trustedDeterministicLedger` + Trace ID) |
+| **AP Dispute & Override Workflows** | ✅ Complete | Automated Commercial Dispute Notice generator (`src/lib/utils/disputeNotice.ts`) and human-in-the-loop variance approval overrides |
+| **Dynamic PO Baseline Management** | 🔄 In Progress | Custom PO baseline switcher and interactive JSON/schema editor for arbitrary invoice testing |
+| **Supabase Persistence & Audit Ledger** | 📋 Planned | Persistent PO storage, immutable reconciliation audit logs, historical tracking |
+| **Configurable Tolerance Policies** | 📋 Planned | Organization-level and vendor-specific automatic variance approval thresholds |
 
 ---
 
@@ -122,6 +164,11 @@ Execute the unit and integration test suite:
 npm test
 ```
 
+Type-check without emitting:
+```bash
+npx tsc --noEmit
+```
+
 ---
 
 ## Project Structure
@@ -131,15 +178,22 @@ clearmatch/
 ├── src/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── reconcile/       # POST endpoint: file/JSON extraction & matching
+│   │   │   └── reconcile/           # POST endpoint: file/JSON extraction & matching
 │   │   ├── layout.tsx
-│   │   └── page.tsx             # Interactive reconciliation workbench
+│   │   └── page.tsx                 # Interactive reconciliation workbench & audit trail
+│   ├── components/
+│   │   └── DisputeModal.tsx         # Plain-text dispute notice modal, .txt download & mailto
 │   └── lib/
-│       ├── extraction/          # Gemini Vision client & Zod extraction schemas
-│       ├── money.ts             # Integer-only currency arithmetic (cents & bps)
-│       └── reconcile.ts         # Deterministic line item matching engine
-├── fixtures/                    # Test purchase orders and sample invoice payloads
-└── vitest.config.mts            # Vitest configuration
+│       ├── extraction/              # Gemini Vision client & Zod extraction schemas
+│       │   ├── gemini.ts            # Multimodal extraction caller with structured output
+│       │   └── schemas.ts           # ExtractedInvoice runtime schema & confidence guards
+│       ├── utils/
+│       │   ├── disputeNotice.ts     # Commercial vendor dispute notice memo generator
+│       │   └── export.ts            # ERP-ready CSV and cryptographic JSON audit proof exporters
+│       ├── money.ts                 # Integer-only currency arithmetic (cents & bps)
+│       └── reconcile.ts             # Deterministic line item matching engine
+├── fixtures/                        # Test purchase orders and sample invoice payloads
+└── vitest.config.mts                # Vitest configuration
 ```
 
 ---
