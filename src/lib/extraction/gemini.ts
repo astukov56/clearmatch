@@ -14,16 +14,25 @@ THE DETERMINISTIC SPLIT (STRICT INVARIANT):
 - Downstream TypeScript domain functions perform all financial arithmetic.
 - If an item total, subtotal, or tax total is explicitly printed on the document, record it in the raw_* fields. If not printed, leave it undefined.
 
+EXTRACTION SCOPE & TABLE BOUNDARIES:
+- Extract line items ONLY from the itemized line-item table(s).
+- Strictly IGNORE executive summaries, remittance stubs, payment coupons, terms and conditions, and boilerplate text.
+
 FAILURE DEFENSE & AUDITABILITY:
 - Assess extraction_confidence as a float between 0.0 and 1.0 based on visual clarity, OCR readability, and document quality.
-- If text is blurry, occluded, ambiguous, torn, or has conflicting printed figures, populate unresolved_ambiguities with clear descriptions of each issue.
+- Populate unresolved_ambiguities with clear, descriptive strings if ANY of the following occur:
+  1. The document contains multiple separate invoices or conflicting invoice identifiers.
+  2. Any line item lacks an explicit unit price or quantity.
+  3. Text is blurry, occluded, ambiguous, torn, truncated, or illegible.
+  4. There are conflicting printed figures.
 - If there are no ambiguities, return an empty array [] for unresolved_ambiguities.`;
 
 const EXTRACTION_PROMPT = `Extract all invoice metadata and raw line items from this document into the required JSON schema.
 Remember:
-1. Do not calculate line totals or taxes; extract raw values as printed.
-2. Extract all line items with their raw descriptions, quantities, and unit prices.
-3. Provide an accurate extraction_confidence score between 0.0 and 1.0 and document any ambiguities.`;
+1. Extract line items ONLY from the itemized line-item table; ignore summaries, remittance stubs, and terms & conditions.
+2. Do not calculate line totals or taxes; extract raw values as printed. Never perform arithmetic.
+3. Record an entry in unresolved_ambiguities if the document contains multiple invoices, lacks explicit unit prices, or has truncated/illegible text.
+4. Provide an accurate extraction_confidence score between 0.0 and 1.0.`;
 
 const invoiceExtractionSchema = {
   type: Type.OBJECT,

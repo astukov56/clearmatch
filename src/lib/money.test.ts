@@ -4,6 +4,7 @@ import {
     centsToDollars,
     calculateTaxFromBps,
     calculateVarianceCents,
+    formatCurrency,
 } from './money';
 
 describe('dollarsToCents', () => {
@@ -75,5 +76,34 @@ describe('calculateVarianceCents', () => {
 
     it('reports 0 when prices match exactly', () => {
         expect(calculateVarianceCents(1500, 1500)).toBe(0);
+    });
+});
+
+describe('formatCurrency', () => {
+    it('formats positive cents with dollar sign', () => {
+        expect(formatCurrency(1050)).toBe('$10.50');
+        expect(formatCurrency(50)).toBe('$0.50');
+        expect(formatCurrency(0)).toBe('$0.00');
+    });
+
+    it('formats negative cents with minus sign before dollar symbol', () => {
+        expect(formatCurrency(-50)).toBe('-$0.50');
+        expect(formatCurrency(-85)).toBe('-$0.85');
+        expect(formatCurrency(-1250)).toBe('-$12.50');
+    });
+
+    it('formats positive cents with explicit plus sign when showPositiveSign is enabled', () => {
+        expect(formatCurrency(450, { showPositiveSign: true })).toBe('+$4.50');
+        expect(formatCurrency(50, { showPositiveSign: true })).toBe('+$0.50');
+        expect(formatCurrency(0, { showPositiveSign: true })).toBe('$0.00');
+    });
+
+    it('retains negative sign before dollar symbol even with showPositiveSign enabled', () => {
+        expect(formatCurrency(-50, { showPositiveSign: true })).toBe('-$0.50');
+        expect(formatCurrency(-85, { showPositiveSign: true })).toBe('-$0.85');
+    });
+
+    it('throws TypeError on non-integer inputs', () => {
+        expect(() => formatCurrency(12.5 as unknown as number)).toThrow(TypeError);
     });
 });

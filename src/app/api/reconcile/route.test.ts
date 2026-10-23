@@ -120,6 +120,60 @@ describe('POST /api/reconcile', () => {
     expect(json.error?.message).toBe('Uploaded file is empty (0 bytes).');
   });
 
+  it('returns 413 when file exceeds 4.0 MB limit', async () => {
+    const formData = new FormData();
+    const largeBuffer = new Uint8Array(4 * 1024 * 1024 + 1);
+    const largeFile = new File([largeBuffer], 'large_invoice.png', { type: 'image/png' });
+    formData.append('file', largeFile);
+    formData.append('po_id', 'po-1001');
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(413);
+    expect(json.success).toBe(false);
+    expect(json.error?.code).toBe('FILE_TOO_LARGE');
+    expect(json.error?.message).toContain('4.0 MB');
+  });
+
+  it('correctly executes float_trap benchmark scenario with negative variance', async () => {
+    const formData = new FormData();
+    const file = new File(['dummy-bytes'], 'float_trap.png', { type: 'image/png' });
+    formData.append('file', file);
+    formData.append('sample', 'true');
+    formData.append('scenario', 'float_trap');
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data?.reconciliation.status).toBe('FLAGGED_DRIFT');
+    expect(json.data?.reconciliation.total_variance_cents).toBe(-50);
+  });
+
+  it('correctly executes ocr_guardrail benchmark scenario with manual review status', async () => {
+    const formData = new FormData();
+    const file = new File(['dummy-bytes'], 'ocr_guardrail.png', { type: 'image/png' });
+    formData.append('file', file);
+    formData.append('sample', 'true');
+    formData.append('scenario', 'ocr_guardrail');
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data?.reconciliation.status).toBe('REQUIRES_MANUAL_REVIEW');
+    expect(json.data?.raw_extraction.extraction_confidence).toBe(0.78);
+    expect(json.data?.raw_extraction.unresolved_ambiguities).toContain(
+      'Unit price column obscured on Line 1'
+    );
+  });
+
   it('returns 415 when file has unsupported MIME type', async () => {
     const formData = new FormData();
     const file = new File(['plain text invoice'], 'invoice.txt', { type: 'text/plain' });

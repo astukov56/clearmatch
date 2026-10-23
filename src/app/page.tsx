@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useCallback } from 'react';
-import { centsToDollars } from '../lib/money';
+import { formatCurrency } from '../lib/money';
 import {
   ReconciliationResult,
   ReconciledLineItem,
@@ -140,6 +140,7 @@ export default function ClearMatchOperatorWorkbench() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingText, setLoadingText] = useState('');
   const [errorBanner, setErrorBanner] = useState<{ code: string; message: string } | null>(null);
+  const [activeTab, setActiveTab] = useState<'ledger' | 'trust_boundary'>('ledger');
 
   const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
   const [rawExtraction, setRawExtraction] = useState<ExtractedInvoice | null>(null);
@@ -147,12 +148,12 @@ export default function ClearMatchOperatorWorkbench() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const executeReconciliation = useCallback(
-    async (fileToSubmit: File, isSample = false) => {
+    async (fileToSubmit: File, isSample = false, scenario?: string) => {
       setIsLoading(true);
       setErrorBanner(null);
       setLoadingText(
         isSample
-          ? 'Loading synthetic payload & reconciling against baseline PO...'
+          ? `Executing benchmark scenario [${scenario || 'default'}]...`
           : 'Running Gemini 3.8 Flash OCR entity extraction...'
       );
 
@@ -162,6 +163,9 @@ export default function ClearMatchOperatorWorkbench() {
         formData.append('po_id', activePO.id);
         if (isSample) {
           formData.append('sample', 'true');
+          if (scenario) {
+            formData.append('scenario', scenario);
+          }
         }
 
         const response = await fetch('/api/reconcile', {
@@ -210,6 +214,15 @@ export default function ClearMatchOperatorWorkbench() {
         return;
       }
 
+      const MAX_FILE_SIZE = 4 * 1024 * 1024;
+      if (file.size > MAX_FILE_SIZE) {
+        setErrorBanner({
+          code: 'FILE_TOO_LARGE',
+          message: 'Uploaded file exceeds the maximum allowed size of 4.0 MB.',
+        });
+        return;
+      }
+
       executeReconciliation(file, false);
     },
     [executeReconciliation]
@@ -233,13 +246,13 @@ export default function ClearMatchOperatorWorkbench() {
     }
   };
 
-  const handleRunSample = async () => {
+  const handleRunBenchmark = async (scenario: 'verified_match' | 'float_trap' | 'ocr_guardrail') => {
     setSelectedFile(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
     const sampleFile = await generateSampleInvoicePng();
-    executeReconciliation(sampleFile, true);
+    executeReconciliation(sampleFile, true, scenario);
   };
 
   const handleManualUpload = () => {
@@ -342,29 +355,112 @@ export default function ClearMatchOperatorWorkbench() {
           {/* Section Header */}
           <div className="flex items-center justify-between border-b border-neutral-200 pb-1.5">
             <h2 className="text-xs uppercase tracking-wider text-neutral-500 font-mono font-semibold">
-              1. SOURCE DOCUMENT & PO BASELINE
+              1. SOURCE DOCUMENT &amp; PO BASELINE
             </h2>
             <span className="text-[11px] font-mono text-neutral-400">PO-2026-0881</span>
           </div>
 
-          {/* Action Bar: Primary CTA & Dropzone */}
-          <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-col gap-3">
-            {/* Primary Action Button */}
-            <button
-              onClick={handleRunSample}
-              disabled={isLoading}
-              className="w-full bg-neutral-900 text-white font-medium text-xs py-2.5 px-4 rounded-md hover:bg-neutral-800 active:translate-y-[1px] shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center justify-center gap-2"
-            >
-              <svg className="w-3.5 h-3.5 text-neutral-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>Run Apex Drift Sample</span>
-            </button>
+          {/* Action Bar: Ingestion Contract & Architecture Verification Suite & Dropzone */}
+          <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-col gap-3.5">
+            {/* Ingestion Contract Checklist */}
+            <div className="bg-neutral-50 border border-neutral-200/80 rounded p-2.5 text-[11px] font-mono space-y-1.5">
+              <div className="text-[10px] uppercase font-bold text-neutral-500 tracking-wider">
+                Ingestion Contract Checklist
+              </div>
+              <div className="flex items-start gap-1.5 text-neutral-700">
+                <span className="text-emerald-600 font-bold shrink-0">✓</span>
+                <span>
+                  <strong className="text-neutral-900">SCOPE:</strong> Single Invoice PDF/PNG/JPG (1 Invoice : 1 PO)
+                </span>
+              </div>
+              <div className="flex items-start gap-1.5 text-neutral-700">
+                <span className="text-emerald-600 font-bold shrink-0">✓</span>
+                <span>
+                  <strong className="text-neutral-900">CONTENT:</strong> Must contain itemized Qty &amp; Unit Price column
+                </span>
+              </div>
+              <div className="flex items-start gap-1.5 text-neutral-700">
+                <span className="text-emerald-600 font-bold shrink-0">✓</span>
+                <span>
+                  <strong className="text-neutral-900">LIMITS:</strong> Max 4.0 MB • Max 50 line items (8K JSON token guard)
+                </span>
+              </div>
+            </div>
+
+            {/* Architecture Verification Suite (3 Benchmark Buttons) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase font-bold text-neutral-500 tracking-wider">
+                  Architecture Verification Suite
+                </span>
+                <span className="text-[10px] font-mono text-neutral-400">Instant Benchmarks</span>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleRunBenchmark('verified_match')}
+                  disabled={isLoading}
+                  className="w-full text-left bg-white hover:bg-neutral-50 border border-neutral-200/90 hover:border-neutral-300 p-2 rounded text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                >
+                  <div className="min-w-0 pr-2">
+                    <div className="font-mono font-medium text-neutral-800 text-[11px] group-hover:text-neutral-900">
+                      1. Verified Match ($0.00)
+                    </div>
+                    <div className="text-[10px] text-neutral-400 truncate">
+                      10x M8 Bolts @ $12.50, 4x Bearings @ $45.00
+                    </div>
+                  </div>
+                  <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0">
+                    APPROVED
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRunBenchmark('float_trap')}
+                  disabled={isLoading}
+                  className="w-full text-left bg-white hover:bg-neutral-50 border border-neutral-200/90 hover:border-neutral-300 p-2 rounded text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                >
+                  <div className="min-w-0 pr-2">
+                    <div className="font-mono font-medium text-neutral-800 text-[11px] group-hover:text-neutral-900">
+                      2. Float-Trap Drift (-$0.50)
+                    </div>
+                    <div className="text-[10px] text-neutral-400 truncate">
+                      10x @ $12.79, 4x @ $44.15 (IEEE 754 drift)
+                    </div>
+                  </div>
+                  <span className="bg-rose-50 text-rose-700 border border-rose-200 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0">
+                    FLAGGED_DRIFT
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRunBenchmark('ocr_guardrail')}
+                  disabled={isLoading}
+                  className="w-full text-left bg-white hover:bg-neutral-50 border border-neutral-200/90 hover:border-neutral-300 p-2 rounded text-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-between group"
+                >
+                  <div className="min-w-0 pr-2">
+                    <div className="font-mono font-medium text-neutral-800 text-[11px] group-hover:text-neutral-900">
+                      3. OCR Guardrail (Ambiguous Scan)
+                    </div>
+                    <div className="text-[10px] text-neutral-400 truncate">
+                      Confidence 0.78 • Obscured line price
+                    </div>
+                  </div>
+                  <span className="bg-amber-50 text-amber-700 border border-amber-200 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0">
+                    MANUAL_REVIEW
+                  </span>
+                </button>
+              </div>
+            </div>
 
             {/* Divider */}
-            <div className="relative flex items-center justify-center my-1">
+            <div className="relative flex items-center justify-center my-0.5">
               <div className="border-t border-neutral-200 w-full" />
-              <span className="bg-white px-2 font-mono text-[10px] uppercase text-neutral-400 absolute">or upload</span>
+              <span className="bg-white px-2 font-mono text-[10px] uppercase text-neutral-400 absolute">
+                or upload live invoice
+              </span>
             </div>
 
             {/* File Dropzone */}
@@ -406,7 +502,7 @@ export default function ClearMatchOperatorWorkbench() {
                   <div>
                     <span className="text-neutral-700 font-medium block">Drop invoice file here</span>
                     <span className="text-neutral-400 text-[11px] font-mono block mt-0.5">
-                      PNG, JPEG, or PDF
+                      PDF, PNG, or JPEG (Max 4.0 MB)
                     </span>
                   </div>
                 )}
@@ -414,6 +510,7 @@ export default function ClearMatchOperatorWorkbench() {
             </div>
 
             <button
+              type="button"
               onClick={handleManualUpload}
               disabled={!selectedFile || selectedFile.size === 0 || isLoading}
               className={`w-full font-medium text-xs py-2.5 px-3 rounded-md transition-all flex items-center justify-center gap-2 ${
@@ -457,19 +554,19 @@ export default function ClearMatchOperatorWorkbench() {
               <div className="flex justify-between pt-1 border-t border-neutral-100">
                 <span className="text-neutral-500">Authorized Subtotal:</span>
                 <span className="font-mono text-neutral-900 font-medium">
-                  ${centsToDollars(activePO.subtotal_cents)}
+                  {formatCurrency(activePO.subtotal_cents)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-neutral-500">Tax (1000 bps):</span>
                 <span className="font-mono text-neutral-900 font-medium">
-                  ${centsToDollars(activePO.tax_cents)}
+                  {formatCurrency(activePO.tax_cents)}
                 </span>
               </div>
               <div className="flex justify-between pt-1.5 border-t border-neutral-200 font-semibold">
                 <span className="text-neutral-800">Total:</span>
                 <span className="font-mono text-neutral-900">
-                  ${centsToDollars(activePO.total_cents)}
+                  {formatCurrency(activePO.total_cents)}
                 </span>
               </div>
             </div>
@@ -494,7 +591,7 @@ export default function ClearMatchOperatorWorkbench() {
                       </p>
                     </div>
                     <span className="font-mono font-medium text-neutral-700 text-[11px] shrink-0">
-                      ${centsToDollars(poItem.unit_price_cents)}/ea
+                      {formatCurrency(poItem.unit_price_cents)}/ea
                     </span>
                   </div>
                 ))}
@@ -503,18 +600,47 @@ export default function ClearMatchOperatorWorkbench() {
           </div>
         </div>
 
-        {/* Right Column (Reconciliation Ledger - ~65% width / 8 cols on 12) */}
+        {/* Right Column (Workbench Ledger & Trust Boundary Inspector - ~65% width / 8 cols on 12) */}
         <div className="lg:col-span-8 flex flex-col gap-5">
-          {/* Section Header */}
-          <div className="flex items-center justify-between border-b border-neutral-200 pb-1.5">
-            <h2 className="text-xs uppercase tracking-wider text-neutral-500 font-mono font-semibold">
-              2. RECONCILIATION LEDGER & AUDIT TRAIL
-            </h2>
-            {reconciliation && (
-              <span className="text-[11px] font-mono text-neutral-400">
-                Processed via Integer Arithmetic
-              </span>
-            )}
+          {/* Section Header with Clean Toggle Tabs */}
+          <div className="flex flex-wrap items-center justify-between border-b border-neutral-200 pb-2 gap-2">
+            <div className="flex items-center gap-1 bg-neutral-100 p-0.5 rounded border border-neutral-200 font-mono text-xs">
+              <button
+                type="button"
+                onClick={() => setActiveTab('ledger')}
+                className={`px-3 py-1 rounded transition-colors font-semibold cursor-pointer ${
+                  activeTab === 'ledger'
+                    ? 'bg-white text-neutral-900 shadow-xs border border-neutral-200/80'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                Reinforced Ledger
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('trust_boundary')}
+                className={`px-3 py-1 rounded transition-colors font-semibold cursor-pointer flex items-center gap-1.5 ${
+                  activeTab === 'trust_boundary'
+                    ? 'bg-white text-neutral-900 shadow-xs border border-neutral-200/80'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                <span>Trust Boundary</span>
+                <span className="text-[10px] text-neutral-400 font-normal hidden sm:inline">(Raw VLM vs Engine)</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {reconciliation ? (
+                <span className="text-[11px] font-mono text-neutral-500">
+                  STATUS: <strong className="text-neutral-800">{reconciliation.status}</strong>
+                </span>
+              ) : (
+                <span className="text-[11px] font-mono text-neutral-400">
+                  Integer Arithmetic Engine
+                </span>
+              )}
+            </div>
           </div>
 
           {/* Loading Indicator */}
@@ -530,33 +656,47 @@ export default function ClearMatchOperatorWorkbench() {
 
           {/* Clean Dotted Empty State */}
           {!reconciliation && !isLoading && (
-            <div className="border border-dashed border-neutral-300 bg-white rounded-md p-12 text-center shadow-xs">
+            <div className="border border-dashed border-neutral-300 bg-white rounded-md p-8 text-center shadow-xs">
               <div className="max-w-md mx-auto">
                 <span className="font-mono text-xs text-neutral-400 block mb-1">
                   NO ACTIVE RECONCILIATION
                 </span>
                 <p className="text-sm font-semibold text-neutral-800 mb-1">
-                  Ready to Reconcile Supplier Invoices
+                  Deterministic Ingestion &amp; Reconciliation Workbench
                 </p>
-                <p className="text-xs text-neutral-500 leading-relaxed">
-                  Select an invoice file or click{' '}
-                  <strong className="text-neutral-700">&quot;Run Apex Drift Sample&quot;</strong> on the left to execute
-                  instant OCR extraction and zero-drift verification against baseline Purchase Order PO-2026-0881.
+                <p className="text-xs text-neutral-500 leading-relaxed mb-4">
+                  Select an invoice file or load an instant benchmark from the{' '}
+                  <strong className="text-neutral-700">Architecture Verification Suite</strong> on the left to inspect the boundary between non-deterministic VLM extraction and deterministic integer math.
                 </p>
-                <div className="mt-4">
+                <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
-                    onClick={handleRunSample}
-                    className="inline-flex items-center gap-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-mono text-xs px-3 py-1.5 rounded border border-neutral-300 transition-colors cursor-pointer"
+                    type="button"
+                    onClick={() => handleRunBenchmark('verified_match')}
+                    className="inline-flex items-center gap-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-mono text-[11px] px-2.5 py-1.5 rounded border border-neutral-300 transition-colors cursor-pointer"
                   >
-                    <span>Quick Start: Run Sample Now</span>
+                    <span>1. Verified Match ($0.00)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRunBenchmark('float_trap')}
+                    className="inline-flex items-center gap-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-mono text-[11px] px-2.5 py-1.5 rounded border border-neutral-300 transition-colors cursor-pointer"
+                  >
+                    <span>2. Float-Trap Drift (-$0.50)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRunBenchmark('ocr_guardrail')}
+                    className="inline-flex items-center gap-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-mono text-[11px] px-2.5 py-1.5 rounded border border-neutral-300 transition-colors cursor-pointer"
+                  >
+                    <span>3. OCR Guardrail</span>
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Reconciled Ledger Content */}
-          {reconciliation && !isLoading && (
+          {/* Tab 1: Reinforced Ledger Content */}
+          {reconciliation && !isLoading && activeTab === 'ledger' && (
             <div className="flex flex-col gap-4">
               {/* Header Row: Document Identifiers & Flat Status Chip */}
               <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
@@ -587,10 +727,10 @@ export default function ClearMatchOperatorWorkbench() {
                   </span>
                   <div className="mt-1.5 flex items-baseline gap-1.5">
                     <span className="font-mono text-lg font-bold text-neutral-900 tabular-nums">
-                      ${centsToDollars(invoicedSubtotalCents)}
+                      {formatCurrency(invoicedSubtotalCents)}
                     </span>
                     <span className="font-mono text-xs text-neutral-400 tabular-nums">
-                      vs ${centsToDollars(activePO.subtotal_cents)}
+                      vs {formatCurrency(activePO.subtotal_cents)}
                     </span>
                   </div>
                   <span className="font-mono text-[10px] text-neutral-400 block mt-1">
@@ -609,7 +749,7 @@ export default function ClearMatchOperatorWorkbench() {
                         totalVarianceCents !== 0 ? 'text-rose-700' : 'text-emerald-700'
                       }`}
                     >
-                      {totalVarianceCents > 0 ? '+' : ''}${centsToDollars(totalVarianceCents)}
+                      {formatCurrency(totalVarianceCents, { showPositiveSign: true })}
                     </span>
                     <span className="font-mono text-xs text-neutral-400 tabular-nums">
                       ({totalVarianceCents > 0 ? '+' : ''}{totalVarianceCents}¢)
@@ -618,7 +758,7 @@ export default function ClearMatchOperatorWorkbench() {
                   <span className="font-mono text-[10px] text-neutral-400 block mt-1">
                     {totalVarianceCents === 0
                       ? 'Exact zero-drift match'
-                      : `Pre-tax variance: ${totalVarianceCents > 0 ? '+' : ''}${centsToDollars(totalVarianceCents)}`}
+                      : `Pre-tax variance: ${formatCurrency(totalVarianceCents, { showPositiveSign: true })}`}
                   </span>
                 </div>
 
@@ -675,24 +815,23 @@ export default function ClearMatchOperatorWorkbench() {
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono tabular-nums">
                               <span className={hasVariance ? 'font-semibold text-rose-700' : 'text-neutral-800'}>
-                                ${centsToDollars(line.invoiced_unit_price_cents)}
+                                {formatCurrency(line.invoiced_unit_price_cents)}
                               </span>{' '}
                               <span className="text-neutral-400 text-[10px]">
-                                / ${centsToDollars(line.expected_unit_price_cents)}
+                                / {formatCurrency(line.expected_unit_price_cents)}
                               </span>
                             </td>
                             <td className="py-2.5 px-3 text-right">
                               {hasVariance ? (
                                 <span className="bg-rose-50 text-rose-700 font-mono font-medium text-[11px] px-1.5 py-0.5 rounded border border-rose-200/60 tabular-nums">
-                                  {line.variance_unit_price_cents > 0 ? '+' : ''}$
-                                  {centsToDollars(line.variance_unit_price_cents)}
+                                  {formatCurrency(line.variance_unit_price_cents, { showPositiveSign: true })}
                                 </span>
                               ) : (
                                 <span className="font-mono text-neutral-400 tabular-nums">$0.00</span>
                               )}
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono font-semibold text-neutral-900 tabular-nums">
-                              ${centsToDollars(line.invoiced_line_total_cents)}
+                              {formatCurrency(line.invoiced_line_total_cents)}
                             </td>
                           </tr>
                         );
@@ -718,7 +857,7 @@ export default function ClearMatchOperatorWorkbench() {
                           {item.description} ({item.sku}) • Qty: {item.quantity}
                         </span>
                         <span className="font-mono text-neutral-700 font-semibold">
-                          ${centsToDollars(item.total_cents)}
+                          {formatCurrency(item.total_cents)}
                         </span>
                       </div>
                     ))}
@@ -746,6 +885,193 @@ export default function ClearMatchOperatorWorkbench() {
                       </div>
                     ))
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tab 2: Trust Boundary Inspector (Raw VLM vs Engine) */}
+          {reconciliation && !isLoading && activeTab === 'trust_boundary' && (
+            <div className="flex flex-col gap-4">
+              {/* Architectural Boundary Header Banner */}
+              <div className="bg-neutral-900 text-white rounded-md p-4 font-mono text-xs shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-neutral-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="bg-amber-400 text-neutral-950 font-bold px-2 py-0.5 rounded text-[10px] tracking-wide">
+                    SYSTEM BOUNDARY
+                  </span>
+                  <span className="text-neutral-200">
+                    Untrusted AI Entity Extraction <span className="text-neutral-500 font-bold">||</span> Trusted Deterministic Engine
+                  </span>
+                </div>
+                <span className="text-[11px] text-neutral-400">
+                  Invariant 1: LLM Never Calculates Math
+                </span>
+              </div>
+
+              {/* Side-by-Side Comparison Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* LEFT: Untrusted VLM Output (Gemini 3.8 Flash) */}
+                <div className="bg-white border-2 border-amber-300/80 rounded-md p-4 shadow-xs flex flex-col gap-3">
+                  {/* Header */}
+                  <div className="flex items-center justify-between border-b border-neutral-200 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                      <h3 className="font-mono font-bold text-xs text-neutral-900 uppercase tracking-wider">
+                        Untrusted VLM Output
+                      </h3>
+                    </div>
+                    <span className="bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[10px] font-semibold px-2 py-0.5 rounded">
+                      Gemini 3.8 Flash
+                    </span>
+                  </div>
+
+                  {/* Confidence & Ambiguity Indicators */}
+                  <div className="bg-neutral-50 border border-neutral-200/80 rounded p-2.5 space-y-1.5 font-mono text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-neutral-500 text-[11px]">Extraction Confidence:</span>
+                      <span className={`font-bold ${rawExtraction && rawExtraction.extraction_confidence < 0.85 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                        {rawExtraction ? `${(rawExtraction.extraction_confidence * 100).toFixed(0)}%` : '—'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-start">
+                      <span className="text-neutral-500 text-[11px]">Unresolved Ambiguities:</span>
+                      <span className="font-bold text-neutral-800 text-[11px] text-right">
+                        {rawExtraction && rawExtraction.unresolved_ambiguities.length > 0 ? (
+                          <span className="text-amber-700 underline decoration-amber-400">
+                            {rawExtraction.unresolved_ambiguities.join(', ')}
+                          </span>
+                        ) : (
+                          <span className="text-emerald-700">None (Clean OCR Table)</span>
+                        )}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-neutral-200/60">
+                      <span className="text-neutral-500 text-[11px]">Arithmetic Execution:</span>
+                      <span className="bg-neutral-200/80 text-neutral-700 px-1.5 py-0.5 rounded text-[10px] font-bold">
+                        ZERO MATH (Raw Floats)
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Raw Line Items Extracted */}
+                  <div>
+                    <span className="font-mono text-[10px] uppercase font-bold text-neutral-400 block mb-1.5">
+                      Raw Extracted Table Items (Unparsed Floats &amp; Strings)
+                    </span>
+                    <div className="space-y-1.5 font-mono text-xs">
+                      {rawExtraction?.items.map((item, idx) => (
+                        <div key={idx} className="bg-neutral-50 border border-neutral-200 rounded p-2 text-[11px]">
+                          <div className="text-neutral-900 font-medium truncate mb-1">
+                            &ldquo;{item.raw_description}&rdquo;
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 text-neutral-600 text-[10px]">
+                            <div>Qty: <strong className="text-neutral-900">{item.quantity}</strong></div>
+                            <div>Unit Price: <strong className="text-neutral-900">${item.unit_price.toFixed(2)}</strong></div>
+                            <div>OCR Total: <strong className="text-neutral-900">{item.raw_item_total !== undefined ? `$${item.raw_item_total.toFixed(2)}` : '—'}</strong></div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Raw JSON Block */}
+                  <div className="mt-auto pt-2 border-t border-neutral-200">
+                    <span className="font-mono text-[10px] uppercase font-bold text-neutral-400 block mb-1">
+                      Raw VLM JSON Response Payload
+                    </span>
+                    <pre className="bg-neutral-900 text-neutral-200 p-2.5 rounded text-[10px] font-mono overflow-x-auto max-h-56 leading-relaxed">
+                      {JSON.stringify(rawExtraction, null, 2)}
+                    </pre>
+                  </div>
+                </div>
+
+                {/* RIGHT: Trusted Deterministic Engine */}
+                <div className="bg-white border-2 border-emerald-400/80 rounded-md p-4 shadow-xs flex flex-col gap-3">
+                  {/* Header */}
+                  <div className="flex items-center justify-between border-b border-neutral-200 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <h3 className="font-mono font-bold text-xs text-neutral-900 uppercase tracking-wider">
+                        Trusted Deterministic Engine
+                      </h3>
+                    </div>
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono text-[10px] font-semibold px-2 py-0.5 rounded">
+                      Pure TypeScript Math
+                    </span>
+                  </div>
+
+                  {/* Invariant Guarantees */}
+                  <div className="bg-neutral-50 border border-neutral-200/80 rounded p-2.5 space-y-1.5 font-mono text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-neutral-500 text-[11px]">Domain Function:</span>
+                      <span className="font-bold text-neutral-800 text-[11px]">reconcileInvoiceAgainstPO</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-neutral-500 text-[11px]">Integer Cents Conversion:</span>
+                      <span className="text-emerald-700 font-bold text-[11px]">dollarsToCents() [No Floats]</span>
+                    </div>
+                    <div className="flex justify-between items-center pt-1 border-t border-neutral-200/60">
+                      <span className="text-neutral-500 text-[11px]">Reconciliation Outcome:</span>
+                      <span className="font-bold text-neutral-900 text-[11px]">{reconciliation.status}</span>
+                    </div>
+                  </div>
+
+                  {/* Integer Cent Arithmetic Breakdown */}
+                  <div>
+                    <span className="font-mono text-[10px] uppercase font-bold text-neutral-400 block mb-1.5">
+                      Integer-Cent Ledger &amp; SKU Normalization
+                    </span>
+                    <div className="space-y-1.5 font-mono text-xs">
+                      {reconciliation.line_items.map((line, idx) => (
+                        <div key={idx} className="bg-neutral-50 border border-neutral-200 rounded p-2 text-[11px]">
+                          <div className="flex justify-between items-baseline mb-1">
+                            <span className="font-medium text-neutral-900 truncate">
+                              SKU: <strong className="text-neutral-900">{line.po_sku || 'UNMATCHED'}</strong>
+                            </span>
+                            <span className="font-bold">
+                              {line.variance_unit_price_cents !== 0 ? (
+                                <span className="text-rose-700">
+                                  Variance: {formatCurrency(line.variance_unit_price_cents, { showPositiveSign: true })}
+                                </span>
+                              ) : (
+                                <span className="text-emerald-700">Zero Drift</span>
+                              )}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 text-[10px] text-neutral-600">
+                            <div>Invoiced: {line.invoiced_unit_price_cents}¢ ({formatCurrency(line.invoiced_unit_price_cents)})</div>
+                            <div>Expected PO: {line.expected_unit_price_cents}¢ ({formatCurrency(line.expected_unit_price_cents)})</div>
+                            <div className="col-span-2 text-neutral-500 pt-0.5 border-t border-neutral-200/40">
+                              Calculated Total: {line.invoiced_quantity} × {line.invoiced_unit_price_cents}¢ = {line.invoiced_line_total_cents}¢ ({formatCurrency(line.invoiced_line_total_cents)})
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Float Trap Callout */}
+                  <div className="bg-neutral-100/90 border border-neutral-200 rounded p-2.5 font-mono text-[10px] text-neutral-700 space-y-1">
+                    <div className="font-bold text-neutral-900">
+                      FLOAT-TRAP DEFENSE &amp; VARIANCE PROOF
+                    </div>
+                    <div>Invoiced Subtotal: <strong className="text-neutral-900">{invoicedSubtotalCents}¢</strong> ({formatCurrency(invoicedSubtotalCents)})</div>
+                    <div>Baseline PO Subtotal: <strong className="text-neutral-900">{activePO.subtotal_cents}¢</strong> ({formatCurrency(activePO.subtotal_cents)})</div>
+                    <div>Exact Net Variance: <strong className={totalVarianceCents !== 0 ? 'text-rose-700' : 'text-emerald-700'}>{totalVarianceCents > 0 ? '+' : ''}{totalVarianceCents}¢ ({formatCurrency(totalVarianceCents, { showPositiveSign: true })})</strong></div>
+                    <div className="text-[9px] text-neutral-500 pt-1 border-t border-neutral-200">
+                      Floating-point IEEE 754 math produces rounding artifacts like <code>-0.4999999999999886</code>. ClearMatch integer-cent domain function guarantees exact <code>-50¢</code> arithmetic.
+                    </div>
+                  </div>
+
+                  {/* Engine JSON Block */}
+                  <div className="mt-auto pt-2 border-t border-neutral-200">
+                    <span className="font-mono text-[10px] uppercase font-bold text-neutral-400 block mb-1">
+                      Engine Reconciliation Audit Payload
+                    </span>
+                    <pre className="bg-neutral-900 text-neutral-200 p-2.5 rounded text-[10px] font-mono overflow-x-auto max-h-56 leading-relaxed">
+                      {JSON.stringify(reconciliation, null, 2)}
+                    </pre>
+                  </div>
                 </div>
               </div>
             </div>

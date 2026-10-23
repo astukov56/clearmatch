@@ -64,3 +64,30 @@ export function calculateVarianceCents(invoicedCents: number, expectedCents: num
 
     return invoicedCents - expectedCents;
 }
+
+/**
+ * Formats an integer cent amount into a formatted currency string with the dollar sign.
+ * Guarantees the negative sign precedes the currency symbol: "-$0.50" rather than "$-0.50".
+ */
+export function formatCurrency(
+    cents: number,
+    options?: { showPositiveSign?: boolean }
+): string {
+    if (!Number.isInteger(cents)) {
+        throw new TypeError(`Cents value must be an integer, received: ${cents}`);
+    }
+
+    const isNegative = cents < 0;
+    const absoluteCents = Math.abs(cents);
+    const dollars = Math.floor(absoluteCents / 100);
+    const remainder = absoluteCents % 100;
+    const paddedRemainder = remainder.toString().padStart(2, '0');
+
+    if (isNegative) {
+        return `-$${dollars}.${paddedRemainder}`;
+    }
+    if (options?.showPositiveSign && cents > 0) {
+        return `+$${dollars}.${paddedRemainder}`;
+    }
+    return `$${dollars}.${paddedRemainder}`;
+}

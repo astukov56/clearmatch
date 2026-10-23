@@ -31,6 +31,91 @@ const PO_REGISTRY: Record<string, PurchaseOrder> = {
   'PO-2026-0881': samplePOFixture as PurchaseOrder,
 };
 
+// Architecture verification benchmarks
+const BENCHMARK_FIXTURES: Record<string, ExtractedInvoice> = {
+  verified_match: {
+    vendor_name: 'Apex Industrial Supplies',
+    invoice_number: 'INV-2026-MATCH',
+    invoice_date: '2026-10-14',
+    currency: 'USD',
+    items: [
+      {
+        raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+        quantity: 10,
+        unit_price: 12.50,
+        tax_rate_percent: 10.0,
+        raw_item_total: 125.00,
+      },
+      {
+        raw_description: 'Sealed Ball Bearings 22mm',
+        quantity: 4,
+        unit_price: 45.00,
+        tax_rate_percent: 10.0,
+        raw_item_total: 180.00,
+      },
+    ],
+    raw_subtotal: 305.00,
+    raw_tax_total: 30.50,
+    raw_grand_total: 335.50,
+    extraction_confidence: 0.98,
+    unresolved_ambiguities: [],
+  },
+  float_trap: {
+    vendor_name: 'Apex Industrial Supplies',
+    invoice_number: 'INV-2026-FLOAT',
+    invoice_date: '2026-10-14',
+    currency: 'USD',
+    items: [
+      {
+        raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+        quantity: 10,
+        unit_price: 12.79,
+        tax_rate_percent: 10.0,
+        raw_item_total: 127.90,
+      },
+      {
+        raw_description: 'Sealed Ball Bearings 22mm',
+        quantity: 4,
+        unit_price: 44.15,
+        tax_rate_percent: 10.0,
+        raw_item_total: 176.60,
+      },
+    ],
+    raw_subtotal: 304.50,
+    raw_tax_total: 30.45,
+    raw_grand_total: 334.95,
+    extraction_confidence: 0.96,
+    unresolved_ambiguities: [],
+  },
+  ocr_guardrail: {
+    vendor_name: 'Apex Industrial Supplies',
+    invoice_number: 'INV-2026-SCAN',
+    invoice_date: '2026-10-14',
+    currency: 'USD',
+    items: [
+      {
+        raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+        quantity: 10,
+        unit_price: 12.50,
+        tax_rate_percent: 10.0,
+        raw_item_total: 125.00,
+      },
+      {
+        raw_description: 'Sealed Ball Bearings 22mm',
+        quantity: 4,
+        unit_price: 45.00,
+        tax_rate_percent: 10.0,
+        raw_item_total: 180.00,
+      },
+    ],
+    raw_subtotal: 305.00,
+    raw_tax_total: 30.50,
+    raw_grand_total: 335.50,
+    extraction_confidence: 0.78,
+    unresolved_ambiguities: ['Unit price column obscured on Line 1'],
+  },
+};
+
 /**
  * Normalizes client mime types (e.g. image/jpg -> image/jpeg).
  */
@@ -88,6 +173,20 @@ export async function POST(
       );
     }
 
+    const MAX_FILE_SIZE_BYTES = 4 * 1024 * 1024; // 4.0 MB ceiling
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'FILE_TOO_LARGE',
+            message: 'Uploaded file exceeds the maximum allowed size of 4.0 MB.',
+          },
+        },
+        { status: 413 }
+      );
+    }
+
     const normalizedMime = normalizeMimeType(file.type);
     if (!ALLOWED_MIME_TYPES.includes(normalizedMime as AllowedMimeType)) {
       return NextResponse.json(
@@ -126,7 +225,12 @@ export async function POST(
 
     let rawExtraction: ExtractedInvoice;
     if (isSample) {
-      rawExtraction = sampleInvoiceDriftFixture as ExtractedInvoice;
+      const scenarioKey = formData.get('scenario');
+      if (typeof scenarioKey === 'string' && scenarioKey in BENCHMARK_FIXTURES) {
+        rawExtraction = BENCHMARK_FIXTURES[scenarioKey];
+      } else {
+        rawExtraction = sampleInvoiceDriftFixture as ExtractedInvoice;
+      }
     } else {
       try {
         rawExtraction = await extractInvoiceFromDocument({
