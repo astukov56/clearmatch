@@ -16,6 +16,7 @@ import { generateDisputeNotice } from '../lib/utils/disputeNotice';
 import DisputeModal from '../components/DisputeModal';
 import PoBaselineModal from '../components/PoBaselineModal';
 import { DEFAULT_PO_PRESET } from '../lib/constants/purchaseOrders';
+import { TolerancePolicy, TOLERANCE_PRESETS } from '../lib/types/tolerance';
 
 interface ReconcileApiResponse {
   success: boolean;
@@ -128,6 +129,9 @@ export async function generateSampleInvoicePng(): Promise<File> {
 
 export default function ClearMatchOperatorWorkbench() {
   const [activePO, setActivePO] = useState<PurchaseOrder>(DEFAULT_PO_PRESET);
+  const [tolerancePolicy, setTolerancePolicy] = useState<TolerancePolicy>(
+    TOLERANCE_PRESETS.STRICT_ZERO
+  );
   const [isPoModalOpen, setIsPoModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -146,6 +150,18 @@ export default function ClearMatchOperatorWorkbench() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleSelectTolerancePolicy = useCallback(
+    (preset: TolerancePolicy) => {
+      setTolerancePolicy(preset);
+      setIsOverrideInputOpen(false);
+      if (rawExtraction) {
+        const updated = reconcile(activePO, rawExtraction, preset);
+        setReconciliation(updated);
+      }
+    },
+    [rawExtraction, activePO]
+  );
+
   const handleApplyPO = useCallback(
     (newPO: PurchaseOrder) => {
       setActivePO(newPO);
@@ -154,13 +170,13 @@ export default function ClearMatchOperatorWorkbench() {
       setErrorBanner(null);
 
       if (rawExtraction) {
-        const newReconciliation = reconcile(newPO, rawExtraction);
+        const newReconciliation = reconcile(newPO, rawExtraction, tolerancePolicy);
         setReconciliation(newReconciliation);
       } else {
         setReconciliation(null);
       }
     },
-    [rawExtraction]
+    [rawExtraction, tolerancePolicy]
   );
 
   const executeReconciliation = useCallback(
@@ -185,6 +201,7 @@ export default function ClearMatchOperatorWorkbench() {
         formData.append('file', fileToSubmit);
         formData.append('po_id', effectivePO.id);
         formData.append('po_data', JSON.stringify(effectivePO));
+        formData.append('policy', JSON.stringify(tolerancePolicy));
         if (isSample) {
           formData.append('sample', 'true');
           if (scenario) {
@@ -220,7 +237,7 @@ export default function ClearMatchOperatorWorkbench() {
         setLoadingText('');
       }
     },
-    [activePO]
+    [activePO, tolerancePolicy]
   );
 
   const handleFileSelection = useCallback(
@@ -350,7 +367,8 @@ export default function ClearMatchOperatorWorkbench() {
     if (!reconciliation) return;
     if (
       reconciliation.status === 'APPROVED_WITH_OVERRIDE' ||
-      reconciliation.status === 'APPROVED'
+      reconciliation.status === 'APPROVED' ||
+      reconciliation.status === 'APPROVED_WITHIN_TOLERANCE'
     ) {
       return;
     }
@@ -400,6 +418,12 @@ export default function ClearMatchOperatorWorkbench() {
             VERIFIED MATCH
           </span>
         );
+      case 'APPROVED_WITHIN_TOLERANCE':
+        return (
+          <span className="bg-teal-50 text-teal-800 border border-teal-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
+            APPROVED (TOLERANCE)
+          </span>
+        );
       case 'REQUIRES_MANUAL_REVIEW':
         return (
           <span className="bg-amber-100 text-amber-800 border border-amber-300 font-mono text-xs font-bold px-2.5 py-1 rounded inline-block">
@@ -432,7 +456,7 @@ export default function ClearMatchOperatorWorkbench() {
     <div className="min-h-screen bg-[#fafafa] text-neutral-900 flex flex-col font-sans">
       {/* 1. Top Navigation Bar */}
       <header className="border-b border-neutral-200 bg-white px-6 py-3 sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Left wordmark and deterministic badge */}
           <div className="flex items-center gap-3">
             <span className="text-base font-bold tracking-tight text-neutral-900">ClearMatch</span>
@@ -441,8 +465,48 @@ export default function ClearMatchOperatorWorkbench() {
             </span>
           </div>
 
+          {/* Compact Monospace STP Policy Selector */}
+          <div className="flex items-center gap-1.5 font-mono text-xs">
+            <span className="text-[11px] text-neutral-500 font-semibold uppercase tracking-wider hidden sm:inline mr-1">
+              STP Policy:
+            </span>
+            <button
+              type="button"
+              onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.STRICT_ZERO)}
+              className={`px-2 py-1 rounded font-mono text-xs transition-colors cursor-pointer border ${
+                tolerancePolicy.id === TOLERANCE_PRESETS.STRICT_ZERO.id
+                  ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                  : 'bg-white text-neutral-700 hover:text-neutral-900 hover:bg-neutral-50 border-neutral-300'
+              }`}
+            >
+              [ Strict ($0.00) ]
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.STANDARD_AP)}
+              className={`px-2 py-1 rounded font-mono text-xs transition-colors cursor-pointer border ${
+                tolerancePolicy.id === TOLERANCE_PRESETS.STANDARD_AP.id
+                  ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                  : 'bg-white text-neutral-700 hover:text-neutral-900 hover:bg-neutral-50 border-neutral-300'
+              }`}
+            >
+              [ Standard AP ($1.00) ]
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.HIGH_VOLUME)}
+              className={`px-2 py-1 rounded font-mono text-xs transition-colors cursor-pointer border ${
+                tolerancePolicy.id === TOLERANCE_PRESETS.HIGH_VOLUME.id
+                  ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                  : 'bg-white text-neutral-700 hover:text-neutral-900 hover:bg-neutral-50 border-neutral-300'
+              }`}
+            >
+              [ High-Volume ($5.00) ]
+            </button>
+          </div>
+
           {/* Right system status chips */}
-          <div className="hidden sm:flex items-center gap-2 font-mono text-xs text-neutral-500">
+          <div className="hidden lg:flex items-center gap-2 font-mono text-xs text-neutral-500">
             <span className="bg-neutral-50 border border-neutral-200 px-2 py-0.5 rounded">
               ENGINE: INTEGER-CENTS
             </span>
@@ -703,6 +767,57 @@ export default function ClearMatchOperatorWorkbench() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* STP Tolerance Policy Management Card */}
+          <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs flex flex-col gap-2.5">
+            <div className="flex items-center justify-between pb-2 border-b border-neutral-200">
+              <span className="font-mono font-bold text-xs text-neutral-900">
+                STP Tolerance Policy
+              </span>
+              <span className="font-mono text-[10px] text-neutral-700 bg-neutral-100 border border-neutral-200 px-2 py-0.5 rounded font-medium">
+                {tolerancePolicy.name}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 pt-0.5">
+              <button
+                type="button"
+                onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.STRICT_ZERO)}
+                className={`py-1.5 px-2 rounded font-mono text-xs transition-all cursor-pointer border text-center ${
+                  tolerancePolicy.id === TOLERANCE_PRESETS.STRICT_ZERO.id
+                    ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                    : 'bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-300'
+                }`}
+              >
+                [ Strict ($0.00) ]
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.STANDARD_AP)}
+                className={`py-1.5 px-2 rounded font-mono text-xs transition-all cursor-pointer border text-center ${
+                  tolerancePolicy.id === TOLERANCE_PRESETS.STANDARD_AP.id
+                    ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                    : 'bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-300'
+                }`}
+              >
+                [ Standard AP ($1.00) ]
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectTolerancePolicy(TOLERANCE_PRESETS.HIGH_VOLUME)}
+                className={`py-1.5 px-2 rounded font-mono text-xs transition-all cursor-pointer border text-center ${
+                  tolerancePolicy.id === TOLERANCE_PRESETS.HIGH_VOLUME.id
+                    ? 'bg-neutral-900 text-white border-neutral-900 font-bold shadow-xs'
+                    : 'bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-300'
+                }`}
+              >
+                [ High-Volume ($5.00) ]
+              </button>
+            </div>
+            <div className="flex items-center justify-between text-[10px] font-mono text-neutral-500 pt-1 border-t border-neutral-100">
+              <span>Limit: {formatCurrency(tolerancePolicy.max_variance_cents)} ({tolerancePolicy.max_variance_bps} bps)</span>
+              <span>Strict Qty: {tolerancePolicy.strict_quantity_match ? 'ENFORCED' : 'OFF'}</span>
+            </div>
           </div>
 
           {/* Active PO Baseline Card */}
@@ -1133,11 +1248,14 @@ export default function ClearMatchOperatorWorkbench() {
                       onClick={handleToggleOverrideInput}
                       disabled={
                         reconciliation.status === 'APPROVED_WITH_OVERRIDE' ||
-                        reconciliation.status === 'APPROVED'
+                        reconciliation.status === 'APPROVED' ||
+                        reconciliation.status === 'APPROVED_WITHIN_TOLERANCE'
                       }
                       className={`inline-flex items-center gap-2 font-mono text-xs px-3.5 py-2 rounded font-semibold transition-all shadow-xs ${
                         reconciliation.status === 'APPROVED_WITH_OVERRIDE'
                           ? 'bg-emerald-50 text-emerald-800 border border-emerald-300 cursor-not-allowed opacity-90'
+                          : reconciliation.status === 'APPROVED_WITHIN_TOLERANCE'
+                          ? 'bg-teal-50 text-teal-800 border border-teal-300 cursor-not-allowed opacity-90'
                           : reconciliation.status === 'APPROVED'
                           ? 'bg-neutral-100 text-neutral-400 border border-neutral-200 cursor-not-allowed opacity-60'
                           : isOverrideInputOpen
@@ -1145,10 +1263,17 @@ export default function ClearMatchOperatorWorkbench() {
                           : 'bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 cursor-pointer active:translate-y-[1px]'
                       }`}
                     >
-                      <span>{reconciliation.status === 'APPROVED_WITH_OVERRIDE' ? '✓' : '🛡️'}</span>
+                      <span>
+                        {reconciliation.status === 'APPROVED_WITH_OVERRIDE' ||
+                        reconciliation.status === 'APPROVED_WITHIN_TOLERANCE'
+                          ? '✓'
+                          : '🛡️'}
+                      </span>
                       <span>
                         {reconciliation.status === 'APPROVED_WITH_OVERRIDE'
                           ? 'Variance Approved (Override)'
+                          : reconciliation.status === 'APPROVED_WITHIN_TOLERANCE'
+                          ? 'Approved (Tolerance Rule)'
                           : reconciliation.status === 'APPROVED'
                           ? 'Fully Matched ($0.00 Variance)'
                           : 'Accept & Approve Variance'}
@@ -1158,7 +1283,10 @@ export default function ClearMatchOperatorWorkbench() {
                 </div>
 
                 {/* Compact Inline Operator Override Form */}
-                {isOverrideInputOpen && reconciliation.status !== 'APPROVED_WITH_OVERRIDE' && (
+                {isOverrideInputOpen &&
+                  reconciliation.status !== 'APPROVED_WITH_OVERRIDE' &&
+                  reconciliation.status !== 'APPROVED_WITHIN_TOLERANCE' &&
+                  reconciliation.status !== 'APPROVED' && (
                   <div className="mt-1 pt-3 border-t border-neutral-200/80 bg-neutral-50 -mx-4 -mb-4 p-3.5 rounded-b-md">
                     <form
                       onSubmit={(e) => {
@@ -1411,6 +1539,7 @@ export default function ClearMatchOperatorWorkbench() {
           invoiceNumber={reconciliation.invoice_number}
           poNumber={reconciliation.po_number || activePO.po_number}
           vendorName={reconciliation.vendor_name}
+          status={reconciliation.status}
         />
       )}
 

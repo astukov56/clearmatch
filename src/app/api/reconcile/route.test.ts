@@ -243,4 +243,32 @@ describe('POST /api/reconcile', () => {
     expect(json.data?.reconciliation.status).toBe('REQUIRES_MANUAL_REVIEW');
     expect(json.data?.reconciliation.unmatched_po_items).toHaveLength(2);
   });
+
+  it('respects submitted policy preset and auto-approves within tolerance', async () => {
+    const formData = new FormData();
+    const file = new File(['dummy-png-bytes'], 'invoice.png', { type: 'image/png' });
+    formData.append('file', file);
+    formData.append('sample', 'true');
+    formData.append('scenario', 'float_trap');
+    formData.append(
+      'policy',
+      JSON.stringify({
+        id: 'standard-ap',
+        name: 'Standard AP ($1.00 / 100 bps)',
+        max_variance_cents: 100,
+        max_variance_bps: 100,
+        strict_quantity_match: true,
+        allow_unexpected_items: false,
+      })
+    );
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data?.reconciliation.status).toBe('APPROVED_WITHIN_TOLERANCE');
+    expect(json.data?.reconciliation.total_variance_cents).toBe(-50);
+  });
 });

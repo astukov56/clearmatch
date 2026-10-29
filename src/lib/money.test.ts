@@ -5,6 +5,7 @@ import {
     calculateTaxFromBps,
     calculateVarianceCents,
     formatCurrency,
+    formatMinorUnits,
 } from './money';
 
 describe('dollarsToCents', () => {
@@ -105,5 +106,11 @@ describe('formatCurrency', () => {
 
     it('throws TypeError on non-integer inputs', () => {
         expect(() => formatCurrency(12.5 as unknown as number)).toThrow(TypeError);
+    });
+
+    it('exports formatMinorUnits as an alias for formatCurrency', () => {
+        expect(formatMinorUnits).toBe(formatCurrency);
+        expect(formatMinorUnits(-50)).toBe('-$0.50');
+        expect(formatMinorUnits(100)).toBe('$1.00');
     });
 });

@@ -4,6 +4,7 @@ import { ExtractedInvoice } from './extraction/schemas';
 import samplePOJson from '../../fixtures/po_sample_01.json';
 import sampleInvoiceDriftJson from '../../fixtures/invoice_sample_01_drift.json';
 import { PO_VERTEX_SAAS } from './constants/purchaseOrders';
+import { TOLERANCE_PRESETS } from './types/tolerance';
 
 const samplePO = samplePOJson as PurchaseOrder;
 const sampleInvoiceDrift = sampleInvoiceDriftJson as ExtractedInvoice;
@@ -293,5 +294,103 @@ describe('reconcile (ClearMatch Domain Reconciliation)', () => {
 
   it('exports reconcileInvoice as an alias for reconcile', () => {
     expect(reconcileInvoice).toBe(reconcile);
+  });
+
+  describe('Configurable Tolerance Policies (STP Automation)', () => {
+    const benchmarkFloatTrap: ExtractedInvoice = {
+      vendor_name: 'Apex Industrial Supplies',
+      invoice_number: 'INV-2026-FLOAT',
+      invoice_date: '2026-10-14',
+      currency: 'USD',
+      items: [
+        {
+          raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+          quantity: 10,
+          unit_price: 12.79,
+          tax_rate_percent: 10.0,
+          raw_item_total: 127.90,
+        },
+        {
+          raw_description: 'Sealed Ball Bearings 22mm',
+          quantity: 4,
+          unit_price: 44.15,
+          tax_rate_percent: 10.0,
+          raw_item_total: 176.60,
+        },
+      ],
+      raw_subtotal: 304.50,
+      raw_tax_total: 30.45,
+      raw_grand_total: 334.95,
+      extraction_confidence: 0.96,
+      unresolved_ambiguities: [],
+    };
+
+    it('Benchmark #2 (-$0.50 drift) flags as FLAGGED_DRIFT under STRICT_ZERO', () => {
+      const result = reconcile(samplePO, benchmarkFloatTrap, TOLERANCE_PRESETS.STRICT_ZERO);
+
+      expect(result.status).toBe('FLAGGED_DRIFT');
+      expect(result.total_variance_cents).toBe(-50);
+      expect(result.audit_notes.some((n) => n.includes('[TOLERANCE_RULE]'))).toBe(false);
+    });
+
+    it('Benchmark #2 auto-approves as APPROVED_WITHIN_TOLERANCE under STANDARD_AP', () => {
+      const result = reconcile(samplePO, benchmarkFloatTrap, TOLERANCE_PRESETS.STANDARD_AP);
+
+      expect(result.status).toBe('APPROVED_WITHIN_TOLERANCE');
+      expect(result.total_variance_cents).toBe(-50);
+      expect(
+        result.audit_notes.some(
+          (n) =>
+            n.includes('[TOLERANCE_RULE]') &&
+            n.includes('-$0.50') &&
+            n.includes('16 bps') &&
+            n.includes('Standard AP ($1.00 / 100 bps)') &&
+            n.includes('Straight-Through Processing approved')
+        )
+      ).toBe(true);
+    });
+
+    it('an invoice with quantity drift remains flagged under STANDARD_AP due to strict_quantity_match: true', () => {
+      const qtyDriftInvoice: ExtractedInvoice = {
+        ...benchmarkFloatTrap,
+        items: [
+          {
+            raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+            quantity: 8, // PO specifies 10
+            unit_price: 12.50, // Matches PO price ($12.50)
+            tax_rate_percent: 10.0,
+            raw_item_total: 100.00,
+          },
+          benchmarkFloatTrap.items[1],
+        ],
+      };
+
+      const result = reconcile(samplePO, qtyDriftInvoice, TOLERANCE_PRESETS.STANDARD_AP);
+
+      expect(result.status).toBe('REQUIRES_MANUAL_REVIEW');
+      expect(result.status).not.toBe('APPROVED_WITHIN_TOLERANCE');
+      expect(result.status).not.toBe('APPROVED');
+      const qtyMismatchLine = result.line_items.find((l) => l.status === 'QUANTITY_MISMATCH');
+      expect(qtyMismatchLine).toBeDefined();
+      expect(qtyMismatchLine?.invoiced_quantity).toBe(8);
+      expect(qtyMismatchLine?.expected_quantity).toBe(10);
+    });
+
+    it('HIGH_VOLUME policy ($5.00 / 200 bps) approves higher drift (+450 cents) while STANDARD_AP flags it', () => {
+      // sampleInvoiceDrift has +$4.50 drift (450 cents)
+      const resultStandard = reconcile(samplePO, sampleInvoiceDrift, TOLERANCE_PRESETS.STANDARD_AP);
+      expect(resultStandard.status).toBe('FLAGGED_DRIFT');
+
+      const resultHighVolume = reconcile(samplePO, sampleInvoiceDrift, TOLERANCE_PRESETS.HIGH_VOLUME);
+      expect(resultHighVolume.status).toBe('APPROVED_WITHIN_TOLERANCE');
+      expect(
+        resultHighVolume.audit_notes.some(
+          (n) =>
+            n.includes('[TOLERANCE_RULE]') &&
+            n.includes('$4.50') &&
+            n.includes('High-Volume Operations ($5.00 / 200 bps)')
+        )
+      ).toBe(true);
+    });
   });
 });

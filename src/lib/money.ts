@@ -91,3 +91,8 @@ export function formatCurrency(
     }
     return `$${dollars}.${paddedRemainder}`;
 }
+
+/**
+ * Minor units (integer cents) currency formatting helper.
+ */
+export const formatMinorUnits = formatCurrency;

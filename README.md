@@ -103,7 +103,7 @@ ClearMatch adheres to four strict architectural rules:
 | **AP Dispute & Override Workflows** | ✅ Complete | Automated Commercial Dispute Notice generator (`src/lib/utils/disputeNotice.ts`) and human-in-the-loop variance approval overrides |
 | **Dynamic PO Baseline Management** | ✅ Complete | Multi-preset procurement switcher (`PO-2026-0881`, `PO-2026-0104`) and interactive JSON contract editor with runtime Zod schema validation |
 | **Supabase Persistence & Audit Ledger** | 📋 Planned | Persistent PO storage, immutable reconciliation audit logs, historical tracking |
-| **Configurable Tolerance Policies** | 📋 Planned | Organization-level and vendor-specific automatic variance approval thresholds |
+| **Configurable Tolerance Policies** | ✅ Complete | Deterministic Straight-Through Processing (STP) thresholds (`Strict`, `Standard AP $1.00`, `High-Volume $5.00`) with dual-gate basis points, strict quantity invariants, and audit logging |
 
 ---
 

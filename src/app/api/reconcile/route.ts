@@ -14,6 +14,11 @@ import {
   PO_VERTEX_SAAS,
   PO_CUSTOM_TEMPLATE,
 } from '../../../lib/constants/purchaseOrders';
+import {
+  TolerancePolicy,
+  TolerancePolicySchema,
+  TOLERANCE_PRESETS,
+} from '../../../lib/types/tolerance';
 
 export interface ReconcileApiResponse {
   success: boolean;
@@ -266,6 +271,20 @@ export async function POST(
       }
     }
 
+    const policyRaw = formData.get('policy');
+    let policy: TolerancePolicy = TOLERANCE_PRESETS.STRICT_ZERO;
+    if (typeof policyRaw === 'string' && policyRaw.trim().length > 0) {
+      try {
+        const parsedPolicy = JSON.parse(policyRaw);
+        const validatedPolicy = TolerancePolicySchema.safeParse(parsedPolicy);
+        if (validatedPolicy.success) {
+          policy = validatedPolicy.data;
+        }
+      } catch {
+        // Fallback to STRICT_ZERO
+      }
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString('base64');
 
@@ -306,7 +325,7 @@ export async function POST(
       }
     }
 
-    const reconciliation = reconcileInvoiceAgainstPO(rawExtraction, purchaseOrder);
+    const reconciliation = reconcileInvoiceAgainstPO(rawExtraction, purchaseOrder, policy);
 
     return NextResponse.json(
       {

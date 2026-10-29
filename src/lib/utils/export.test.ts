@@ -7,6 +7,7 @@ import {
   exportToCsv,
   exportAuditProofJSON,
   triggerDownload,
+  isApprovedStatus,
 } from './export';
 import { ReconciliationResult } from '../reconcile';
 import { ExtractedInvoice } from '../extraction/schemas';
@@ -321,6 +322,36 @@ describe('export utilities', () => {
       expect(payload.trustedDeterministicLedger.audit_notes).toContain(
         '[HUMAN_OVERRIDE] Approved by operator: "Approved: Variance within operational tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)'
       );
+      expect(payload.meta.isApproved).toBe(true);
+    });
+
+    it('sets isApproved to true for APPROVED_WITHIN_TOLERANCE status in audit proof', () => {
+      const toleranceReconciliation: ReconciliationResult = {
+        ...sampleReconciliation,
+        status: 'APPROVED_WITHIN_TOLERANCE',
+      };
+
+      const payload = buildAuditProofPayload(
+        sampleRawExtraction,
+        toleranceReconciliation,
+        'LOG-PO-2026-0881'
+      );
+
+      expect(payload.meta.isApproved).toBe(true);
+      expect(payload.trustedDeterministicLedger.status).toBe('APPROVED_WITHIN_TOLERANCE');
+    });
+  });
+
+  describe('isApprovedStatus', () => {
+    it('returns true for APPROVED, APPROVED_WITH_OVERRIDE, and APPROVED_WITHIN_TOLERANCE', () => {
+      expect(isApprovedStatus('APPROVED')).toBe(true);
+      expect(isApprovedStatus('APPROVED_WITH_OVERRIDE')).toBe(true);
+      expect(isApprovedStatus('APPROVED_WITHIN_TOLERANCE')).toBe(true);
+    });
+
+    it('returns false for FLAGGED_DRIFT and REQUIRES_MANUAL_REVIEW', () => {
+      expect(isApprovedStatus('FLAGGED_DRIFT')).toBe(false);
+      expect(isApprovedStatus('REQUIRES_MANUAL_REVIEW')).toBe(false);
     });
   });
 

@@ -1,5 +1,5 @@
 import { formatCurrency } from '../money';
-import { ReconciliationResult } from '../reconcile';
+import { ReconciliationResult, ReconciliationStatus } from '../reconcile';
 import { ExtractedInvoice } from '../extraction/schemas';
 
 /**
@@ -172,12 +172,25 @@ export function exportReconciliationToCSV(
  */
 export const exportToCsv = exportReconciliationToCSV;
 
+/**
+ * Helper to determine whether a reconciliation status represents an approved state
+ * (standard zero-variance match, within configurable tolerance, or operator override).
+ */
+export function isApprovedStatus(status: ReconciliationStatus): boolean {
+  return (
+    status === 'APPROVED' ||
+    status === 'APPROVED_WITHIN_TOLERANCE' ||
+    status === 'APPROVED_WITH_OVERRIDE'
+  );
+}
+
 export interface AuditProofPayload {
   meta: {
     app: string;
     version: string;
     exportedAt: string;
     traceId: string;
+    isApproved: boolean;
   };
   untrustedVlmExtraction: ExtractedInvoice | unknown;
   trustedDeterministicLedger: ReconciliationResult;
@@ -197,6 +210,7 @@ export function buildAuditProofPayload(
       version: 'v0.1-deterministic',
       exportedAt: new Date().toISOString(),
       traceId,
+      isApproved: isApprovedStatus(engineLedger.status),
     },
     untrustedVlmExtraction: rawVlm ?? null,
     trustedDeterministicLedger: engineLedger,

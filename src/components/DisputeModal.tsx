@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { ReconciliationStatus } from '../lib/reconcile';
+import { isApprovedStatus } from '../lib/utils/export';
 
 interface DisputeModalProps {
   isOpen: boolean;
@@ -9,6 +11,7 @@ interface DisputeModalProps {
   invoiceNumber: string;
   poNumber?: string;
   vendorName: string;
+  status?: ReconciliationStatus;
 }
 
 export default function DisputeModal({
@@ -18,6 +21,7 @@ export default function DisputeModal({
   invoiceNumber,
   poNumber,
   vendorName,
+  status,
 }: DisputeModalProps) {
   const [copied, setCopied] = useState(false);
 
@@ -100,11 +104,18 @@ export default function DisputeModal({
               id="dispute-modal-title"
               className="text-xs font-mono font-bold uppercase tracking-wider text-neutral-900 flex items-center gap-2"
             >
-              <span className="w-2 h-2 rounded-full bg-rose-600 inline-block" />
+              <span
+                className={`w-2 h-2 rounded-full inline-block ${
+                  status && isApprovedStatus(status) ? 'bg-teal-600' : 'bg-rose-600'
+                }`}
+              />
               Vendor Dispute Notice — {invoiceNumber || 'Draft'}
             </h3>
             <p className="text-[11px] font-mono text-neutral-500 mt-0.5">
-              Target Vendor: {vendorName} • Ready for Accounts Receivable dispatch
+              Target Vendor: {vendorName} •{' '}
+              {status && isApprovedStatus(status)
+                ? `Informational Record (${status.replace(/_/g, ' ')})`
+                : 'Ready for Accounts Receivable dispatch'}
             </p>
           </div>
 
@@ -117,6 +128,16 @@ export default function DisputeModal({
             ✕
           </button>
         </div>
+
+        {/* Informational banner when generated for an approved invoice */}
+        {status && isApprovedStatus(status) && (
+          <div className="bg-teal-50 border-b border-teal-200 px-5 py-2 font-mono text-[11px] text-teal-800 flex items-center gap-2">
+            <span>✓</span>
+            <span>
+              Invoice is currently <strong>{status}</strong>. This notice is generated for compliance records &amp; rate auditing.
+            </span>
+          </div>
+        )}
 
         {/* Content Body: Preformatted Monospace Notice */}
         <div className="p-4 sm:p-5 flex-1 overflow-y-auto bg-neutral-950">

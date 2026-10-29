@@ -1,5 +1,6 @@
-import { dollarsToCents, calculateVarianceCents } from './money';
+import { dollarsToCents, calculateVarianceCents, formatMinorUnits } from './money';
 import { ExtractedInvoice } from './extraction/schemas';
+import { TolerancePolicy, TOLERANCE_PRESETS } from './types/tolerance';
 
 export interface POLineItem {
   line_number: number;
@@ -43,6 +44,7 @@ export interface ReconciledLineItem {
 
 export type ReconciliationStatus = 
   | 'APPROVED' 
+  | 'APPROVED_WITHIN_TOLERANCE'
   | 'FLAGGED_DRIFT' 
   | 'REQUIRES_MANUAL_REVIEW'
   | 'APPROVED_WITH_OVERRIDE';
@@ -111,7 +113,8 @@ function findMatchingPOIndex(
  */
 export function reconcile(
   po: PurchaseOrder,
-  invoice: ExtractedInvoice
+  invoice: ExtractedInvoice,
+  policy: TolerancePolicy = TOLERANCE_PRESETS.STRICT_ZERO
 ): ReconciliationResult {
   const auditNotes: string[] = [];
   const reconciledLineItems: ReconciledLineItem[] = [];
@@ -253,21 +256,46 @@ export function reconcile(
   const hasUnmatchedPOItems = remainingPOItems.length > 0;
   const hasAmbiguities = invoice.unresolved_ambiguities.length > 0;
   const isLowConfidence = invoice.extraction_confidence < CONFIDENCE_THRESHOLD;
+  const hasZeroQuantityDrift = !hasQuantityMismatch;
+  const hasZeroUnexpectedItems = !hasUnexpectedItem;
+
+  const requiresManualReview =
+    !isVendorMatch ||
+    !isCurrencyMatch ||
+    hasAmbiguities ||
+    isLowConfidence ||
+    hasUnmatchedPOItems ||
+    (policy.strict_quantity_match ? !hasZeroQuantityDrift : false) ||
+    (!policy.allow_unexpected_items ? !hasZeroUnexpectedItems : false);
 
   let overallStatus: ReconciliationStatus;
 
-  if (
-    !isVendorMatch ||
-    !isCurrencyMatch ||
-    hasUnexpectedItem ||
-    hasUnmatchedPOItems ||
-    hasQuantityMismatch ||
-    hasAmbiguities ||
-    isLowConfidence
-  ) {
+  if (requiresManualReview) {
     overallStatus = 'REQUIRES_MANUAL_REVIEW';
-  } else if (hasPriceMismatch || totalVarianceCents !== 0) {
-    overallStatus = 'FLAGGED_DRIFT';
+  } else if (hasPriceMismatch || totalVarianceCents !== 0 || !hasZeroQuantityDrift || !hasZeroUnexpectedItems) {
+    const abs_drift_cents = Math.abs(totalVarianceCents);
+    const drift_bps =
+      po.subtotal_cents > 0
+        ? Math.round((abs_drift_cents / po.subtotal_cents) * 10000)
+        : 0;
+
+    const isWithinTolerance =
+      abs_drift_cents <= policy.max_variance_cents &&
+      drift_bps <= policy.max_variance_bps &&
+      (!policy.strict_quantity_match || hasZeroQuantityDrift) &&
+      (!policy.allow_unexpected_items ? hasZeroUnexpectedItems : true) &&
+      isVendorMatch;
+
+    const driftExists = abs_drift_cents > 0 || hasPriceMismatch || !hasZeroQuantityDrift || !hasZeroUnexpectedItems;
+
+    if (isWithinTolerance && driftExists) {
+      overallStatus = 'APPROVED_WITHIN_TOLERANCE';
+      auditNotes.push(
+        `[TOLERANCE_RULE] Net variance of ${formatMinorUnits(totalVarianceCents)} (${drift_bps} bps) is within ${policy.name} threshold. Straight-Through Processing approved.`
+      );
+    } else {
+      overallStatus = 'FLAGGED_DRIFT';
+    }
   } else {
     overallStatus = 'APPROVED';
     if (auditNotes.length === 0) {
@@ -292,7 +320,8 @@ export const reconcileInvoice = reconcile;
 
 export function reconcileInvoiceAgainstPO(
   invoiceOrPo: ExtractedInvoice | PurchaseOrder,
-  poOrInvoice: PurchaseOrder | ExtractedInvoice
+  poOrInvoice: PurchaseOrder | ExtractedInvoice,
+  policy: TolerancePolicy = TOLERANCE_PRESETS.STRICT_ZERO
 ): ReconciliationResult {
   // Check if first argument is a PurchaseOrder
   if (
@@ -300,7 +329,7 @@ export function reconcileInvoiceAgainstPO(
     'items' in invoiceOrPo &&
     (invoiceOrPo.items.length === 0 || 'sku' in invoiceOrPo.items[0])
   ) {
-    return reconcile(invoiceOrPo as PurchaseOrder, poOrInvoice as ExtractedInvoice);
+    return reconcile(invoiceOrPo as PurchaseOrder, poOrInvoice as ExtractedInvoice, policy);
   }
-  return reconcile(poOrInvoice as PurchaseOrder, invoiceOrPo as ExtractedInvoice);
+  return reconcile(poOrInvoice as PurchaseOrder, invoiceOrPo as ExtractedInvoice, policy);
 }
