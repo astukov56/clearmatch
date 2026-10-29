@@ -146,7 +146,7 @@ export default function DisputeModal({
               className="inline-flex items-center gap-1.5 font-mono text-xs px-3 py-1.5 rounded border border-neutral-300 bg-white hover:bg-neutral-100 text-neutral-800 shadow-xs transition-colors cursor-pointer font-medium"
             >
               <span>⬇</span>
-              <span>Download .txt</span>
+              <span>Download Memo (.txt)</span>
             </button>
 
             <button

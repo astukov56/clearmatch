@@ -101,7 +101,7 @@ ClearMatch adheres to four strict architectural rules:
 | **Utilitarian Workbench UI** | ✅ Complete | Staged upload state machine, Reinforced Ledger vs. raw Trust Boundary inspector, instant architecture benchmarks |
 | **Compliance & ERP Audit Exports** | ✅ Complete | Client-side ERP CSV export and cryptographic-style JSON Audit Proofs (`untrustedVlmExtraction` + `trustedDeterministicLedger` + Trace ID) |
 | **AP Dispute & Override Workflows** | ✅ Complete | Automated Commercial Dispute Notice generator (`src/lib/utils/disputeNotice.ts`) and human-in-the-loop variance approval overrides |
-| **Dynamic PO Baseline Management** | 🔄 In Progress | Custom PO baseline switcher and interactive JSON/schema editor for arbitrary invoice testing |
+| **Dynamic PO Baseline Management** | ✅ Complete | Multi-preset procurement switcher (`PO-2026-0881`, `PO-2026-0104`) and interactive JSON contract editor with runtime Zod schema validation |
 | **Supabase Persistence & Audit Ledger** | 📋 Planned | Persistent PO storage, immutable reconciliation audit logs, historical tracking |
 | **Configurable Tolerance Policies** | 📋 Planned | Organization-level and vendor-specific automatic variance approval thresholds |
 

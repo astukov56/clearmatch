@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST, ReconcileApiResponse } from './route';
 import sampleInvoiceDrift from '../../../../fixtures/invoice_sample_01_drift.json';
+import { PO_VERTEX_SAAS } from '../../../lib/constants/purchaseOrders';
 
 // Mock extraction module
 const mockExtractInvoiceFromDocument = vi.fn();
@@ -220,5 +221,26 @@ describe('POST /api/reconcile', () => {
     expect(json.success).toBe(false);
     expect(json.error?.code).toBe('EXTRACTION_FAILED');
     expect(json.error?.message).toContain('illegible document');
+  });
+
+  it('correctly uses custom po_data baseline submitted in request', async () => {
+    mockExtractInvoiceFromDocument.mockResolvedValueOnce(sampleInvoiceDrift);
+
+    const formData = new FormData();
+    const file = new File(['dummy-png-bytes'], 'invoice.png', { type: 'image/png' });
+    formData.append('file', file);
+    formData.append('po_data', JSON.stringify(PO_VERTEX_SAAS));
+
+    const request = createRequest(formData);
+    const response = await POST(request);
+    const json = (await response.json()) as ReconcileApiResponse;
+
+    expect(response.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.data?.reconciliation.po_number).toBe('PO-2026-0104');
+    expect(json.data?.reconciliation.vendor_name).toBe('Vertex Cloud Services');
+    // Hardware invoice against Vertex SaaS PO leads to manual review and vendor mismatch
+    expect(json.data?.reconciliation.status).toBe('REQUIRES_MANUAL_REVIEW');
+    expect(json.data?.reconciliation.unmatched_po_items).toHaveLength(2);
   });
 });

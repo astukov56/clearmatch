@@ -3,6 +3,7 @@ import { reconcile, reconcileInvoice, PurchaseOrder } from './reconcile';
 import { ExtractedInvoice } from './extraction/schemas';
 import samplePOJson from '../../fixtures/po_sample_01.json';
 import sampleInvoiceDriftJson from '../../fixtures/invoice_sample_01_drift.json';
+import { PO_VERTEX_SAAS } from './constants/purchaseOrders';
 
 const samplePO = samplePOJson as PurchaseOrder;
 const sampleInvoiceDrift = sampleInvoiceDriftJson as ExtractedInvoice;
@@ -198,6 +199,96 @@ describe('reconcile (ClearMatch Domain Reconciliation)', () => {
     const resultCurrency = reconcile(samplePO, currencyMismatchInvoice);
     expect(resultCurrency.status).toBe('REQUIRES_MANUAL_REVIEW');
     expect(resultCurrency.audit_notes.some((n) => n.includes('Currency mismatch'))).toBe(true);
+  });
+
+  it('correctly handles cross-contract mismatch between PO-2026-0104 (Vertex SaaS) and hardware invoice (INV-99412)', () => {
+    const result = reconcile(PO_VERTEX_SAAS, sampleInvoiceDrift);
+
+    expect(result.status).toBe('REQUIRES_MANUAL_REVIEW');
+    expect(result.audit_notes.some((n) => n.includes('Vendor mismatch'))).toBe(true);
+
+    // Both PO items are unmatched (omitted from invoice)
+    expect(result.unmatched_po_items).toHaveLength(2);
+    expect(result.unmatched_po_items.map((i) => i.sku)).toEqual(['SAAS-SEAT-01', 'API-COMP-02']);
+
+    // Both invoice items are unexpected (not on PO)
+    expect(result.line_items).toHaveLength(2);
+    expect(result.line_items.every((i) => i.status === 'UNEXPECTED_ITEM')).toBe(true);
+    expect(result.line_items.every((i) => i.po_sku === null)).toBe(true);
+  });
+
+  it('correctly handles cross-contract mismatch between PO-2026-0104 (Vertex SaaS) and float-trap hardware invoice (INV-2026-912)', () => {
+    const invoice2026_912: ExtractedInvoice = {
+      vendor_name: 'Apex Industrial Supplies',
+      invoice_number: 'INV-2026-912',
+      invoice_date: '2026-10-14',
+      currency: 'USD',
+      extraction_confidence: 0.96,
+      unresolved_ambiguities: [],
+      items: [
+        {
+          raw_description: 'Industrial Hex Bolts M8 (Box of 100)',
+          quantity: 10,
+          unit_price: 12.79,
+          tax_rate_percent: 10.0,
+          raw_item_total: 127.90,
+        },
+        {
+          raw_description: 'Sealed Ball Bearings 22mm',
+          quantity: 4,
+          unit_price: 44.15,
+          tax_rate_percent: 10.0,
+          raw_item_total: 176.60,
+        },
+      ],
+      raw_subtotal: 304.50,
+      raw_tax_total: 30.45,
+      raw_grand_total: 334.95,
+    };
+
+    const result = reconcile(PO_VERTEX_SAAS, invoice2026_912);
+
+    expect(result.po_number).toBe('PO-2026-0104');
+    expect(result.invoice_number).toBe('INV-2026-912');
+    expect(result.vendor_name).toBe('Vertex Cloud Services');
+    expect(result.status).toBe('REQUIRES_MANUAL_REVIEW');
+
+    // Integer cent verification
+    expect(result.invoiced_subtotal_cents).toBe(30450); // $304.50
+    expect(PO_VERTEX_SAAS.subtotal_cents).toBe(175000); // $1,750.00
+    expect(result.total_variance_cents).toBe(-144550); // 30450 - 175000 = -144550 (-$1,445.50)
+
+    // Unmatched PO items: all contracted items missing from invoice
+    expect(result.unmatched_po_items).toHaveLength(2);
+    expect(result.unmatched_po_items[0].sku).toBe('SAAS-SEAT-01');
+    expect(result.unmatched_po_items[0].quantity).toBe(25);
+    expect(result.unmatched_po_items[0].unit_price_cents).toBe(4000);
+    expect(result.unmatched_po_items[1].sku).toBe('API-COMP-02');
+    expect(result.unmatched_po_items[1].quantity).toBe(5);
+    expect(result.unmatched_po_items[1].unit_price_cents).toBe(15000);
+
+    // Line items: all billed items are unexpected
+    expect(result.line_items).toHaveLength(2);
+    expect(result.line_items[0].status).toBe('UNEXPECTED_ITEM');
+    expect(result.line_items[0].po_sku).toBeNull();
+    expect(result.line_items[0].invoiced_quantity).toBe(10);
+    expect(result.line_items[0].expected_quantity).toBe(0);
+    expect(result.line_items[0].invoiced_unit_price_cents).toBe(1279);
+    expect(result.line_items[0].expected_unit_price_cents).toBe(0);
+    expect(result.line_items[0].invoiced_line_total_cents).toBe(12790);
+
+    expect(result.line_items[1].status).toBe('UNEXPECTED_ITEM');
+    expect(result.line_items[1].po_sku).toBeNull();
+    expect(result.line_items[1].invoiced_quantity).toBe(4);
+    expect(result.line_items[1].expected_quantity).toBe(0);
+    expect(result.line_items[1].invoiced_unit_price_cents).toBe(4415);
+    expect(result.line_items[1].expected_unit_price_cents).toBe(0);
+    expect(result.line_items[1].invoiced_line_total_cents).toBe(17660);
+
+    // Audit notes check
+    expect(result.audit_notes.some((n) => n.includes('Vendor mismatch'))).toBe(true);
+    expect(result.audit_notes.some((n) => n.includes('Unexpected item on invoice'))).toBe(true);
+    expect(result.audit_notes.some((n) => n.includes('Unmatched PO item'))).toBe(true);
   });
 
   it('exports reconcileInvoice as an alias for reconcile', () => {

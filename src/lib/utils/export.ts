@@ -47,9 +47,10 @@ export function buildReconciliationCSV(
 
   const rows: string[] = [headers.join(',')];
 
-  data.line_items.forEach((line, index) => {
+  let lineIndex = 1;
+  data.line_items.forEach((line) => {
     const row = [
-      escapeCsvCell(index + 1),
+      escapeCsvCell(lineIndex++),
       escapeCsvCell(line.po_sku ?? ''),
       escapeCsvCell(line.invoice_description),
       escapeCsvCell(line.invoiced_quantity),
@@ -64,6 +65,26 @@ export function buildReconciliationCSV(
     ];
     rows.push(row.join(','));
   });
+
+  if (data.unmatched_po_items && data.unmatched_po_items.length > 0) {
+    data.unmatched_po_items.forEach((poItem) => {
+      const row = [
+        escapeCsvCell(lineIndex++),
+        escapeCsvCell(poItem.sku ?? ''),
+        escapeCsvCell(`[UNBILLED] ${poItem.description}`),
+        escapeCsvCell(0),
+        escapeCsvCell(poItem.quantity),
+        escapeCsvCell(formatCurrency(poItem.unit_price_cents)),
+        escapeCsvCell(formatCurrency(0)),
+        escapeCsvCell(
+          formatCurrency(-poItem.unit_price_cents, { showPositiveSign: true })
+        ),
+        escapeCsvCell(formatCurrency(0)),
+        escapeCsvCell('UNMATCHED_PO_ITEM'),
+      ];
+      rows.push(row.join(','));
+    });
+  }
 
   // Calculate summary metrics deterministically
   const invoicedSubtotalCents =
@@ -145,6 +166,11 @@ export function exportReconciliationToCSV(
   );
   triggerDownload(blob, `reconciliation-${safeInvoiceNumber}-${Date.now()}.csv`);
 }
+
+/**
+ * Alias for exportReconciliationToCSV supporting short nomenclature.
+ */
+export const exportToCsv = exportReconciliationToCSV;
 
 export interface AuditProofPayload {
   meta: {

@@ -34,27 +34,45 @@ export function generateDisputeNotice(ledger: ReconciliationResult, poNumber: st
       item.status === 'UNEXPECTED_ITEM'
   );
 
+  const unmatchedPOItems = ledger.unmatched_po_items ?? [];
+
   let discrepanciesText = '';
-  if (discrepantLines.length === 0) {
+  if (discrepantLines.length === 0 && unmatchedPOItems.length === 0) {
     discrepanciesText = '  No line item pricing or quantity discrepancies detected.\n';
   } else {
-    discrepanciesText = discrepantLines
-      .map((item, index) => {
-        const itemDesc = formatDescription(item.invoice_description, item.po_sku);
-        const lineVarianceCents =
-          item.invoiced_line_total_cents - item.expected_quantity * item.expected_unit_price_cents;
+    const formattedDiscrepantLines = discrepantLines.map((item, index) => {
+      const itemDesc = formatDescription(item.invoice_description, item.po_sku);
+      const lineVarianceCents =
+        item.invoiced_line_total_cents - item.expected_quantity * item.expected_unit_price_cents;
 
-        return [
-          `  ${index + 1}. Item Description:      ${itemDesc}`,
-          `     Discrepancy Category:  ${item.status.replace(/_/g, ' ')}`,
-          `     Billed Quantity:       ${item.invoiced_quantity} (Contracted / Expected: ${item.expected_quantity})`,
-          `     Expected Unit Price:   ${formatCurrency(item.expected_unit_price_cents)}`,
-          `     Invoiced Unit Price:   ${formatCurrency(item.invoiced_unit_price_cents)}`,
-          `     Unit Variance:         ${formatCurrency(item.variance_unit_price_cents, { showPositiveSign: true })}`,
-          `     Line Total Variance:   ${formatCurrency(lineVarianceCents, { showPositiveSign: true })} (Invoiced: ${formatCurrency(item.invoiced_line_total_cents)})`,
-        ].join('\n');
-      })
-      .join('\n\n');
+      return [
+        `  ${index + 1}. Item Description:      ${itemDesc}`,
+        `     Discrepancy Category:  ${item.status.replace(/_/g, ' ')}`,
+        `     Billed Quantity:       ${item.invoiced_quantity} (Contracted / Expected: ${item.expected_quantity})`,
+        `     Expected Unit Price:   ${formatCurrency(item.expected_unit_price_cents)}`,
+        `     Invoiced Unit Price:   ${formatCurrency(item.invoiced_unit_price_cents)}`,
+        `     Unit Variance:         ${formatCurrency(item.variance_unit_price_cents, { showPositiveSign: true })}`,
+        `     Line Total Variance:   ${formatCurrency(lineVarianceCents, { showPositiveSign: true })} (Invoiced: ${formatCurrency(item.invoiced_line_total_cents)})`,
+      ].join('\n');
+    });
+
+    const formattedUnmatchedItems = unmatchedPOItems.map((poItem, index) => {
+      const entryNum = discrepantLines.length + index + 1;
+      const itemDesc = formatDescription(poItem.description, poItem.sku);
+      const poItemTotalCents =
+        poItem.total_cents ?? poItem.quantity * poItem.unit_price_cents;
+      return [
+        `  ${entryNum}. Item Description:      ${itemDesc}`,
+        `     Discrepancy Category:  UNMATCHED PO ITEM (OMITTED FROM INVOICE)`,
+        `     Billed Quantity:       0 (Contracted / Expected: ${poItem.quantity})`,
+        `     Expected Unit Price:   ${formatCurrency(poItem.unit_price_cents)}`,
+        `     Invoiced Unit Price:   ${formatCurrency(0)}`,
+        `     Unit Variance:         ${formatCurrency(-poItem.unit_price_cents, { showPositiveSign: true })}`,
+        `     Line Total Variance:   ${formatCurrency(-poItemTotalCents, { showPositiveSign: true })} (Invoiced: ${formatCurrency(0)})`,
+      ].join('\n');
+    });
+
+    discrepanciesText = [...formattedDiscrepantLines, ...formattedUnmatchedItems].join('\n\n');
   }
 
   const isOvercharge = netVarianceCents > 0;

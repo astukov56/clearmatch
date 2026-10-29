@@ -8,6 +8,12 @@ import {
 } from '../../../lib/reconcile';
 import samplePOFixture from '../../../../fixtures/po_sample_01.json';
 import sampleInvoiceDriftFixture from '../../../../fixtures/invoice_sample_01_drift.json';
+import {
+  PurchaseOrderSchema,
+  PO_APEX_HARDWARE,
+  PO_VERTEX_SAAS,
+  PO_CUSTOM_TEMPLATE,
+} from '../../../lib/constants/purchaseOrders';
 
 export interface ReconcileApiResponse {
   success: boolean;
@@ -27,8 +33,12 @@ type AllowedMimeType = typeof ALLOWED_MIME_TYPES[number];
 
 // Known purchase order fixtures registry
 const PO_REGISTRY: Record<string, PurchaseOrder> = {
-  'po-1001': samplePOFixture as PurchaseOrder,
-  'PO-2026-0881': samplePOFixture as PurchaseOrder,
+  'po-1001': PO_APEX_HARDWARE,
+  'PO-2026-0881': PO_APEX_HARDWARE,
+  'po-1002': PO_VERTEX_SAAS,
+  'PO-2026-0104': PO_VERTEX_SAAS,
+  'po-custom': PO_CUSTOM_TEMPLATE,
+  'CUSTOM': PO_CUSTOM_TEMPLATE,
 };
 
 // Architecture verification benchmarks
@@ -201,21 +211,59 @@ export async function POST(
       );
     }
 
-    const poIdRaw = formData.get('po_id');
-    const poId = typeof poIdRaw === 'string' && poIdRaw.trim().length > 0 ? poIdRaw.trim() : 'po-1001';
+    const poDataRaw = formData.get('po_data');
+    let purchaseOrder: PurchaseOrder | undefined;
 
-    const purchaseOrder = PO_REGISTRY[poId];
-    if (!purchaseOrder) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'PO_NOT_FOUND',
-            message: `Purchase Order with ID "${poId}" was not found.`,
+    if (typeof poDataRaw === 'string' && poDataRaw.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(poDataRaw);
+        const validated = PurchaseOrderSchema.safeParse(parsed);
+        if (!validated.success) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: {
+                code: 'INVALID_PO_DATA',
+                message: 'Submitted PO baseline failed schema validation.',
+                details: validated.error.issues,
+              },
+            },
+            { status: 400 }
+          );
+        }
+        purchaseOrder = validated.data as PurchaseOrder;
+      } catch (err) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'MALFORMED_PO_JSON',
+              message: 'Failed to parse JSON from po_data.',
+              details: err instanceof Error ? err.message : String(err),
+            },
           },
-        },
-        { status: 404 }
-      );
+          { status: 400 }
+        );
+      }
+    }
+
+    if (!purchaseOrder) {
+      const poIdRaw = formData.get('po_id');
+      const poId = typeof poIdRaw === 'string' && poIdRaw.trim().length > 0 ? poIdRaw.trim() : 'po-1001';
+
+      purchaseOrder = PO_REGISTRY[poId];
+      if (!purchaseOrder) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'PO_NOT_FOUND',
+              message: `Purchase Order with ID "${poId}" was not found.`,
+            },
+          },
+          { status: 404 }
+        );
+      }
     }
 
     const arrayBuffer = await file.arrayBuffer();

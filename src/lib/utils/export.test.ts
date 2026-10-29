@@ -4,6 +4,7 @@ import {
   buildReconciliationCSV,
   buildAuditProofPayload,
   exportReconciliationToCSV,
+  exportToCsv,
   exportAuditProofJSON,
   triggerDownload,
 } from './export';
@@ -146,7 +147,7 @@ describe('export utilities', () => {
         status: 'APPROVED_WITH_OVERRIDE',
         audit_notes: [
           ...sampleReconciliation.audit_notes,
-          '[HUMAN_OVERRIDE] Approved by operator: "Variance within acceptable commercial tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)',
+          '[HUMAN_OVERRIDE] Approved by operator: "Approved: Variance within operational tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)',
         ],
       };
 
@@ -159,8 +160,128 @@ describe('export utilities', () => {
       expect(csv).toContain('Reconciliation Status,APPROVED_WITH_OVERRIDE');
       expect(csv).toContain('AUDIT TRAIL LOG');
       expect(csv).toContain(
-        'Audit Note,"[HUMAN_OVERRIDE] Approved by operator: ""Variance within acceptable commercial tolerance (<$1.00)"" (2026-10-23T04:21:45.000Z)"'
+        'Audit Note,"[HUMAN_OVERRIDE] Approved by operator: ""Approved: Variance within operational tolerance (<$1.00)"" (2026-10-23T04:21:45.000Z)"'
       );
+    });
+
+    it('accurately includes UNEXPECTED_ITEM and unmatched PO items in CSV export without undefined errors', () => {
+      const crossContractResult: ReconciliationResult = {
+        po_number: 'PO-2026-0104',
+        invoice_number: 'INV-2026-912',
+        vendor_name: 'Vertex Cloud Services',
+        status: 'REQUIRES_MANUAL_REVIEW',
+        total_variance_cents: 12500,
+        invoiced_subtotal_cents: 12500,
+        line_items: [
+          {
+            invoice_description: 'Industrial Hex Bolts M8 (Box of 100)',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 10,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 1250,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 1250,
+            invoiced_line_total_cents: 12500,
+          },
+        ],
+        unmatched_po_items: [
+          {
+            line_number: 1,
+            sku: 'SAAS-SEAT-01',
+            description: 'Enterprise Team Seat Licenses (Monthly)',
+            quantity: 25,
+            unit_price_cents: 4000,
+            tax_rate_bps: 1000,
+            total_cents: 100000,
+          },
+        ],
+        audit_notes: ['Cross-contract discrepancy'],
+      };
+
+      const csv = buildReconciliationCSV(crossContractResult, 'PO-2026-0104', 'INV-2026-912');
+
+      // Unexpected item with empty SKU string (not "null" or "undefined")
+      expect(csv).toContain('1,,Industrial Hex Bolts M8 (Box of 100),10,0,$0.00,$12.50,+$12.50,$125.00,UNEXPECTED_ITEM');
+
+      // Unmatched PO item with clean SKU and UNMATCHED_PO_ITEM status
+      expect(csv).toContain('2,SAAS-SEAT-01,[UNBILLED] Enterprise Team Seat Licenses (Monthly),0,25,$40.00,$0.00,-$40.00,$0.00,UNMATCHED_PO_ITEM');
+    });
+
+    it('accurately exports complete cross-contract mismatch (PO-2026-0104 vs INV-2026-912) with all unexpected and unmatched items', () => {
+      const fullCrossContract: ReconciliationResult = {
+        po_number: 'PO-2026-0104',
+        invoice_number: 'INV-2026-912',
+        vendor_name: 'Vertex Cloud Services',
+        status: 'REQUIRES_MANUAL_REVIEW',
+        total_variance_cents: -144550,
+        invoiced_subtotal_cents: 30450,
+        line_items: [
+          {
+            invoice_description: 'Industrial Hex Bolts M8 (Box of 100)',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 10,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 1279,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 1279,
+            invoiced_line_total_cents: 12790,
+          },
+          {
+            invoice_description: 'Sealed Ball Bearings 22mm',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 4,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 4415,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 4415,
+            invoiced_line_total_cents: 17660,
+          },
+        ],
+        unmatched_po_items: [
+          {
+            line_number: 1,
+            sku: 'SAAS-SEAT-01',
+            description: 'Enterprise Team Seat Licenses (Monthly)',
+            quantity: 25,
+            unit_price_cents: 4000,
+            tax_rate_bps: 1000,
+            total_cents: 100000,
+          },
+          {
+            line_number: 2,
+            sku: 'API-COMP-02',
+            description: 'Dedicated API Compute Units (Block of 1M)',
+            quantity: 5,
+            unit_price_cents: 15000,
+            tax_rate_bps: 1000,
+            total_cents: 75000,
+          },
+        ],
+        audit_notes: ['Cross-contract vendor mismatch detected.'],
+      };
+
+      const csv = buildReconciliationCSV(fullCrossContract, 'PO-2026-0104', 'INV-2026-912');
+      const lines = csv.split('\r\n');
+
+      // Both unexpected invoice lines
+      expect(lines[1]).toBe('1,,Industrial Hex Bolts M8 (Box of 100),10,0,$0.00,$12.79,+$12.79,$127.90,UNEXPECTED_ITEM');
+      expect(lines[2]).toBe('2,,Sealed Ball Bearings 22mm,4,0,$0.00,$44.15,+$44.15,$176.60,UNEXPECTED_ITEM');
+
+      // Both unmatched PO lines
+      expect(lines[3]).toBe('3,SAAS-SEAT-01,[UNBILLED] Enterprise Team Seat Licenses (Monthly),0,25,$40.00,$0.00,-$40.00,$0.00,UNMATCHED_PO_ITEM');
+      expect(lines[4]).toBe('4,API-COMP-02,[UNBILLED] Dedicated API Compute Units (Block of 1M),0,5,$150.00,$0.00,-$150.00,$0.00,UNMATCHED_PO_ITEM');
+
+      // Summary block
+      expect(csv).toContain('Invoiced Subtotal,$304.50');
+      expect(csv).toContain('PO Subtotal Baseline,$1750.00');
+      expect(csv).toContain('Total Drift / Variance,-$1445.50');
+      expect(csv).toContain('Reconciliation Status,REQUIRES_MANUAL_REVIEW');
+
+      // Alias verification
+      expect(exportToCsv).toBe(exportReconciliationToCSV);
     });
   });
 
@@ -186,7 +307,7 @@ describe('export utilities', () => {
         status: 'APPROVED_WITH_OVERRIDE',
         audit_notes: [
           ...sampleReconciliation.audit_notes,
-          '[HUMAN_OVERRIDE] Approved by operator: "Variance within acceptable commercial tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)',
+          '[HUMAN_OVERRIDE] Approved by operator: "Approved: Variance within operational tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)',
         ],
       };
 
@@ -198,7 +319,7 @@ describe('export utilities', () => {
 
       expect(payload.trustedDeterministicLedger.status).toBe('APPROVED_WITH_OVERRIDE');
       expect(payload.trustedDeterministicLedger.audit_notes).toContain(
-        '[HUMAN_OVERRIDE] Approved by operator: "Variance within acceptable commercial tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)'
+        '[HUMAN_OVERRIDE] Approved by operator: "Approved: Variance within operational tolerance (<$1.00)" (2026-10-23T04:21:45.000Z)'
       );
     });
   });

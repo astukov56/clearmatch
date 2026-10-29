@@ -169,5 +169,134 @@ describe('disputeNotice utility', () => {
       expect(notice).toContain('Commercial Impact:                Contract Rate Discrepancy (Net Underbill / Parity)');
       expect(notice).toContain('Current Invoiced Payable:         $305.00');
     });
+
+    it('accurately enumerates UNEXPECTED_ITEM and UNMATCHED PO items on cross-contract mismatch without undefined SKU', () => {
+      const crossContractLedger: ReconciliationResult = {
+        po_number: 'PO-2026-0104',
+        invoice_number: 'INV-2026-912',
+        vendor_name: 'Vertex Cloud Services',
+        status: 'REQUIRES_MANUAL_REVIEW',
+        total_variance_cents: 129500,
+        invoiced_subtotal_cents: 304500,
+        line_items: [
+          {
+            invoice_description: 'Industrial Hex Bolts M8 (Box of 100)',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 10,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 1250,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 1250,
+            invoiced_line_total_cents: 12500,
+          },
+        ],
+        unmatched_po_items: [
+          {
+            line_number: 1,
+            sku: 'SAAS-SEAT-01',
+            description: 'Enterprise Team Seat Licenses (Monthly)',
+            quantity: 25,
+            unit_price_cents: 4000,
+            tax_rate_bps: 1000,
+            total_cents: 100000,
+          },
+        ],
+        audit_notes: ['Vendor mismatch', 'Unexpected item on invoice'],
+      };
+
+      const notice = generateDisputeNotice(crossContractLedger, 'PO-2026-0104');
+
+      // Verify unexpected line is formatted without undefined SKU
+      expect(notice).toContain('1. Item Description:      Industrial Hex Bolts M8 (Box of 100)');
+      expect(notice).toContain('Discrepancy Category:  UNEXPECTED ITEM');
+      expect(notice).not.toContain('undefined');
+      expect(notice).not.toContain('null');
+
+      // Verify unmatched PO item is enumerated
+      expect(notice).toContain('2. Item Description:      [SKU: SAAS-SEAT-01] Enterprise Team Seat Licenses (Monthly)');
+      expect(notice).toContain('Discrepancy Category:  UNMATCHED PO ITEM (OMITTED FROM INVOICE)');
+      expect(notice).toContain('Billed Quantity:       0 (Contracted / Expected: 25)');
+    });
+
+    it('generates complete dispute notice for full cross-contract mismatch (PO-2026-0104 vs INV-2026-912)', () => {
+      const fullCrossContract: ReconciliationResult = {
+        po_number: 'PO-2026-0104',
+        invoice_number: 'INV-2026-912',
+        vendor_name: 'Vertex Cloud Services',
+        status: 'REQUIRES_MANUAL_REVIEW',
+        total_variance_cents: -144550,
+        invoiced_subtotal_cents: 30450,
+        line_items: [
+          {
+            invoice_description: 'Industrial Hex Bolts M8 (Box of 100)',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 10,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 1279,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 1279,
+            invoiced_line_total_cents: 12790,
+          },
+          {
+            invoice_description: 'Sealed Ball Bearings 22mm',
+            po_sku: null,
+            status: 'UNEXPECTED_ITEM',
+            invoiced_quantity: 4,
+            expected_quantity: 0,
+            invoiced_unit_price_cents: 4415,
+            expected_unit_price_cents: 0,
+            variance_unit_price_cents: 4415,
+            invoiced_line_total_cents: 17660,
+          },
+        ],
+        unmatched_po_items: [
+          {
+            line_number: 1,
+            sku: 'SAAS-SEAT-01',
+            description: 'Enterprise Team Seat Licenses (Monthly)',
+            quantity: 25,
+            unit_price_cents: 4000,
+            tax_rate_bps: 1000,
+            total_cents: 100000,
+          },
+          {
+            line_number: 2,
+            sku: 'API-COMP-02',
+            description: 'Dedicated API Compute Units (Block of 1M)',
+            quantity: 5,
+            unit_price_cents: 15000,
+            tax_rate_bps: 1000,
+            total_cents: 75000,
+          },
+        ],
+        audit_notes: [
+          'Vendor mismatch: PO specifies "Vertex Cloud Services" but invoice specifies "Apex Industrial Supplies".',
+          'Unexpected item on invoice: "Industrial Hex Bolts M8 (Box of 100)" not found on purchase order.',
+          'Unexpected item on invoice: "Sealed Ball Bearings 22mm" not found on purchase order.',
+          'Unmatched PO item: "Enterprise Team Seat Licenses (Monthly)" (SKU: SAAS-SEAT-01) was not invoiced.',
+          'Unmatched PO item: "Dedicated API Compute Units (Block of 1M)" (SKU: API-COMP-02) was not invoiced.',
+        ],
+      };
+
+      const notice = generateDisputeNotice(fullCrossContract, 'PO-2026-0104');
+
+      // Verify all 4 items are enumerated
+      expect(notice).toContain('1. Item Description:      Industrial Hex Bolts M8 (Box of 100)');
+      expect(notice).toContain('2. Item Description:      Sealed Ball Bearings 22mm');
+      expect(notice).toContain('3. Item Description:      [SKU: SAAS-SEAT-01] Enterprise Team Seat Licenses (Monthly)');
+      expect(notice).toContain('4. Item Description:      [SKU: API-COMP-02] Dedicated API Compute Units (Block of 1M)');
+
+      // Verify financial summary displays integer-cent computed baseline and variance
+      expect(notice).toContain('PO Authorized Baseline Subtotal:  $1750.00');
+      expect(notice).toContain('Invoiced Subtotal Billed:         $304.50');
+      expect(notice).toContain('Net Audit Variance:               -$1445.50');
+      expect(notice).toContain('Current Invoiced Payable:         $304.50');
+
+      // No undefined or null strings
+      expect(notice).not.toContain('undefined');
+      expect(notice).not.toContain('null');
+    });
   });
 });

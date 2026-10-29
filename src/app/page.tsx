@@ -7,26 +7,15 @@ import {
   ReconciledLineItem,
   ReconciliationStatus,
   POLineItem,
+  PurchaseOrder,
+  reconcile,
 } from '../lib/reconcile';
 import { ExtractedInvoice } from '../lib/extraction/schemas';
 import { exportReconciliationToCSV, exportAuditProofJSON } from '../lib/utils/export';
 import { generateDisputeNotice } from '../lib/utils/disputeNotice';
 import DisputeModal from '../components/DisputeModal';
-import samplePOJson from '../../fixtures/po_sample_01.json';
-
-interface POFixture {
-  id: string;
-  po_number: string;
-  vendor_name: string;
-  currency: string;
-  issue_date: string;
-  items: POLineItem[];
-  subtotal_cents: number;
-  tax_cents: number;
-  total_cents: number;
-}
-
-const activePO = samplePOJson as POFixture;
+import PoBaselineModal from '../components/PoBaselineModal';
+import { DEFAULT_PO_PRESET } from '../lib/constants/purchaseOrders';
 
 interface ReconcileApiResponse {
   success: boolean;
@@ -138,6 +127,8 @@ export async function generateSampleInvoicePng(): Promise<File> {
 }
 
 export default function ClearMatchOperatorWorkbench() {
+  const [activePO, setActivePO] = useState<PurchaseOrder>(DEFAULT_PO_PRESET);
+  const [isPoModalOpen, setIsPoModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -150,13 +141,35 @@ export default function ClearMatchOperatorWorkbench() {
   const [isDisputeModalOpen, setIsDisputeModalOpen] = useState(false);
   const [isOverrideInputOpen, setIsOverrideInputOpen] = useState(false);
   const [overrideReason, setOverrideReason] = useState(
-    'Variance within acceptable commercial tolerance (<$1.00)'
+    'Approved: Variance within operational tolerance (<$1.00)'
   );
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const handleApplyPO = useCallback(
+    (newPO: PurchaseOrder) => {
+      setActivePO(newPO);
+      setIsOverrideInputOpen(false);
+      setOverrideReason('Approved: Variance within operational tolerance (<$1.00)');
+      setErrorBanner(null);
+
+      if (rawExtraction) {
+        const newReconciliation = reconcile(newPO, rawExtraction);
+        setReconciliation(newReconciliation);
+      } else {
+        setReconciliation(null);
+      }
+    },
+    [rawExtraction]
+  );
+
   const executeReconciliation = useCallback(
-    async (fileToSubmit: File, isSample = false, scenario?: string) => {
+    async (
+      fileToSubmit: File,
+      isSample = false,
+      scenario?: string,
+      targetPO?: PurchaseOrder
+    ) => {
       setIsLoading(true);
       setErrorBanner(null);
       setLoadingText(
@@ -165,10 +178,13 @@ export default function ClearMatchOperatorWorkbench() {
           : 'Running Gemini 3.8 Flash OCR entity extraction...'
       );
 
+      const effectivePO = targetPO || activePO;
+
       try {
         const formData = new FormData();
         formData.append('file', fileToSubmit);
-        formData.append('po_id', activePO.id);
+        formData.append('po_id', effectivePO.id);
+        formData.append('po_data', JSON.stringify(effectivePO));
         if (isSample) {
           formData.append('sample', 'true');
           if (scenario) {
@@ -204,7 +220,7 @@ export default function ClearMatchOperatorWorkbench() {
         setLoadingText('');
       }
     },
-    []
+    [activePO]
   );
 
   const handleFileSelection = useCallback(
@@ -214,7 +230,7 @@ export default function ClearMatchOperatorWorkbench() {
       setRawExtraction(null);
       setErrorBanner(null);
       setIsOverrideInputOpen(false);
-      setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
+      setOverrideReason('Approved: Variance within operational tolerance (<$1.00)');
 
       if (file.size === 0) {
         setErrorBanner({
@@ -242,7 +258,7 @@ export default function ClearMatchOperatorWorkbench() {
     setRawExtraction(null);
     setErrorBanner(null);
     setIsOverrideInputOpen(false);
-    setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
+    setOverrideReason('Approved: Variance within operational tolerance (<$1.00)');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -266,15 +282,20 @@ export default function ClearMatchOperatorWorkbench() {
     }
   };
 
-  const handleRunBenchmark = async (scenario: 'verified_match' | 'float_trap' | 'ocr_guardrail') => {
+  const handleRunBenchmark = async (
+    scenario: 'verified_match' | 'float_trap' | 'ocr_guardrail'
+  ) => {
+    // Benchmark fixtures are specifically authored for the default baseline (PO-2026-0881).
+    // Synchronize the active PO baseline so deterministic matching succeeds against the authorized contract.
+    setActivePO(DEFAULT_PO_PRESET);
     setSelectedFile(null);
     setIsOverrideInputOpen(false);
-    setOverrideReason('Variance within acceptable commercial tolerance (<$1.00)');
+    setOverrideReason('Approved: Variance within operational tolerance (<$1.00)');
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
     const sampleFile = await generateSampleInvoicePng();
-    executeReconciliation(sampleFile, true, scenario);
+    executeReconciliation(sampleFile, true, scenario, DEFAULT_PO_PRESET);
   };
 
   const handleManualUpload = useCallback(() => {
@@ -312,7 +333,7 @@ export default function ClearMatchOperatorWorkbench() {
         traceId: `LOG-${reconciliation.po_number || activePO.po_number}`,
       }
     );
-  }, [reconciliation]);
+  }, [reconciliation, activePO]);
 
   const handleExportAuditProof = useCallback(() => {
     if (!reconciliation) return;
@@ -323,7 +344,7 @@ export default function ClearMatchOperatorWorkbench() {
       traceId,
       reconciliation.invoice_number || 'INV-UNKNOWN'
     );
-  }, [reconciliation, rawExtraction]);
+  }, [reconciliation, rawExtraction, activePO]);
 
   const handleToggleOverrideInput = useCallback(() => {
     if (!reconciliation) return;
@@ -333,8 +354,13 @@ export default function ClearMatchOperatorWorkbench() {
     ) {
       return;
     }
-    setIsOverrideInputOpen((prev) => !prev);
-  }, [reconciliation]);
+    setIsOverrideInputOpen((prev) => {
+      if (!prev && !overrideReason.trim()) {
+        setOverrideReason('Approved: Variance within operational tolerance (<$1.00)');
+      }
+      return !prev;
+    });
+  }, [reconciliation, overrideReason]);
 
   const handleConfirmOverride = useCallback(() => {
     if (!reconciliation) return;
@@ -455,7 +481,7 @@ export default function ClearMatchOperatorWorkbench() {
             <h2 className="text-xs uppercase tracking-wider text-neutral-500 font-mono font-semibold">
               1. SOURCE DOCUMENT &amp; PO BASELINE
             </h2>
-            <span className="text-[11px] font-mono text-neutral-400">PO-2026-0881</span>
+            <span className="text-[11px] font-mono text-neutral-400">{activePO.po_number}</span>
           </div>
 
           {/* Action Bar: Ingestion Contract & Architecture Verification Suite & Dropzone */}
@@ -683,11 +709,20 @@ export default function ClearMatchOperatorWorkbench() {
           <div className="bg-white border border-neutral-200/80 rounded-md p-4 shadow-xs">
             <div className="flex items-center justify-between pb-2.5 border-b border-neutral-200">
               <span className="font-mono font-bold text-xs text-neutral-900">
-                PO-2026-0881
+                {activePO.po_number}
               </span>
-              <span className="bg-neutral-100 text-neutral-700 font-mono text-[10px] px-1.5 py-0.5 rounded border border-neutral-200">
-                AUTHORIZED
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPoModalOpen(true)}
+                  className="font-mono text-[11px] text-neutral-700 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 border border-neutral-300 rounded px-2 py-0.5 transition-colors cursor-pointer"
+                >
+                  Edit PO Baseline
+                </button>
+                <span className="bg-neutral-100 text-neutral-700 font-mono text-[10px] px-1.5 py-0.5 rounded border border-neutral-200">
+                  AUTHORIZED
+                </span>
+              </div>
             </div>
 
             {/* Key-Value Block */}
@@ -724,15 +759,15 @@ export default function ClearMatchOperatorWorkbench() {
               </div>
             </div>
 
-            {/* 2 Contracted PO Line Items */}
+            {/* Contracted PO Line Items */}
             <div className="mt-4 pt-3 border-t border-neutral-200">
               <span className="font-mono text-[11px] uppercase tracking-wider text-neutral-400 block mb-2 font-medium">
-                Contracted Items (2)
+                Contracted Items ({activePO.items.length})
               </span>
               <div className="space-y-1.5">
                 {activePO.items.map((poItem) => (
                   <div
-                    key={poItem.sku}
+                    key={`${poItem.sku}-${poItem.line_number}`}
                     className="p-2 rounded bg-neutral-50 border border-neutral-200/70 text-xs flex items-center justify-between"
                   >
                     <div className="min-w-0 pr-2">
@@ -1136,14 +1171,14 @@ export default function ClearMatchOperatorWorkbench() {
                         htmlFor="operator-override-reason"
                         className="font-mono text-xs font-bold text-neutral-800 whitespace-nowrap"
                       >
-                        Operator Override Reason:
+                        Operator Justification / Policy Reference:
                       </label>
                       <input
                         id="operator-override-reason"
                         type="text"
                         value={overrideReason}
                         onChange={(e) => setOverrideReason(e.target.value)}
-                        placeholder="Variance within acceptable commercial tolerance (<$1.00)"
+                        placeholder="Approved: Variance within operational tolerance (<$1.00)"
                         required
                         className="flex-1 font-mono text-xs px-3 py-1.5 bg-white border border-neutral-300 rounded focus:outline-hidden focus:ring-1 focus:ring-neutral-900 focus:border-neutral-900 shadow-xs"
                       />
@@ -1378,6 +1413,14 @@ export default function ClearMatchOperatorWorkbench() {
           vendorName={reconciliation.vendor_name}
         />
       )}
+
+      {/* PO Baseline Contract Editor Modal */}
+      <PoBaselineModal
+        isOpen={isPoModalOpen}
+        onClose={() => setIsPoModalOpen(false)}
+        activePO={activePO}
+        onApply={handleApplyPO}
+      />
     </div>
   );
 }
