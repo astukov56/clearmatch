@@ -1,5 +1,9 @@
 # ClearMatch — Deterministic Accounts Payable Reconciliation & Audit Workbench
 
+[![Production Deployment](https://img.shields.io/badge/Deployment-Live_on_Vercel-000000?style=flat-square&logo=vercel)](https://clearmatch-kappa.vercel.app)
+
+**Live Production Workbench:** [https://clearmatch-kappa.vercel.app](https://clearmatch-kappa.vercel.app)
+
 B2B Accounts Payable teams lose thousands of dollars to subtle vendor price creep, uncontracted seat overages, and IEEE 754 floating-point rounding errors. Worse, wrapping financial workflows directly around raw Large Language Models introduces non-deterministic calculation drift and hallucination risks directly into accounting ledgers.
 
 **ClearMatch** solves this by enforcing a strict **Trust Boundary** between non-deterministic document extraction and deterministic financial computation. Vision-Language Models (VLMs) are restricted exclusively to unstructured OCR entity extraction, while all currency normalization, line-item math, basis-point tax validation, and contract variance checks execute inside a pure, integer-cent TypeScript reconciliation engine backed by an immutable PostgreSQL audit ledger.
