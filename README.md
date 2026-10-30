@@ -1,173 +1,154 @@
 # ClearMatch
 
-> **Deterministic Invoice & Purchase Order Reconciliation Engine (`v0.1-deterministic`)**
+> **Deterministic Accounts Payable Invoice & Purchase Order Reconciliation Engine**
 
-[![Status: Work in Progress](https://img.shields.io/badge/status-work--in--progress-orange.svg)](https://github.com/astukov56/clearmatch)
 [![Next.js 16](https://img.shields.io/badge/Next.js-16.4-black.svg)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen.svg)](https://vitest.dev/)
-
----
-
-> [!WARNING]
-> ### 🚧 Work in Progress (WIP)
-> **ClearMatch is under active development and is not yet production-ready.**  
-> Core architecture, API contracts, domain logic, and UI components are continuously being iterated. Features and schemas are subject to change.
+[![TypeScript 5](https://img.shields.io/badge/TypeScript-5.x%20Strict-blue.svg)](https://www.typescriptlang.org/)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL%20%2B%20Auth-3ecf8e.svg)](https://supabase.com/)
+[![Tests](https://img.shields.io/badge/Vitest-128%20passing-brightgreen.svg)](https://vitest.dev/)
 
 ---
 
 ## Overview
 
-**ClearMatch** is an automated accounts payable reconciliation engine designed to eliminate invoice drift, phantom rate creep, and quantity mismatches between vendor invoices and contracted purchase orders (POs).
+**ClearMatch** is a high-density Accounts Payable (AP) reconciliation workbench and financial audit engine designed to detect vendor rate drift, uncontracted seat creep, and quantity mismatches between incoming vendor invoices and authorized Purchase Order (PO) baselines.
 
-### The Core Architectural Thesis
+Rather than delegating financial arithmetic to probabilistic LLMs, ClearMatch enforces a strict **Trust Boundary** between **non-deterministic perception** (multimodal VLM entity extraction) and **deterministic execution** (pure TypeScript integer-cent financial math).
 
-ClearMatch rejects the fragile pattern of delegating financial calculations, rounding, or balance verification to probabilistic LLMs. Instead, the platform establishes an unyielding **Trust Boundary**:
+---
 
-- **Perception vs. Execution:** Gemini 3.8 Flash is strictly isolated as an untrusted perception layer validated via Zod runtime schemas (`ExtractedInvoiceSchema`). It is prohibited from performing arithmetic.
-- **Deterministic Accounting:** All unit price comparisons, line totals, tax basis points, and drift calculations execute in pure TypeScript using integer cents (`src/lib/money.ts` and `src/lib/reconcile.ts`) to prevent IEEE-754 floating-point drift.
+## System Architecture & Trust Boundary
 
 ```text
-[ Document Image / PDF ]
-           │
-           ▼
-┌───────────────────────────────────────────────┐
-│  UNTRUSTED PERCEPTION LAYER                   │
-│  Gemini 3.8 Flash Vision OCR                  │
-│  • Entity extraction only (text, rates, qty)  │
-│  • Zero arithmetic, zero hallucinated totals  │
-└──────────────────────┬────────────────────────┘
-                       │
-                       ▼
-┌───────────────────────────────────────────────┐
-│  RUNTIME VALIDATION & GUARDRAILS              │
-│  Zod Schema Validation (ExtractedInvoice)     │
-│  Confidence scoring & ambiguity reporting     │
-└──────────────────────┬────────────────────────┘
-                       │
-                       ▼
-┌───────────────────────────────────────────────┐
-│  TRUSTED DETERMINISTIC EXECUTION              │
-│  Pure TypeScript Financial Engine             │
-│  • Integer-cent math (zero float operations)  │
-│  • Basis-point tax calculations (bps)         │
-│  • Deterministic line-item reconciliation     │
-└──────────────────────┬────────────────────────┘
-                       │
-                       ▼
-┌───────────────────────────────────────────────┐
-│  AUDIT PROOF & OPERATOR COMPLIANCE            │
-│  • RFC 4180 ERP-ready CSV export              │
-│  • Cryptographic JSON Audit Proof             │
-│  • Itemized Commercial Dispute Notices (.txt) │
-│  • Human-in-the-loop variance approval        │
-└───────────────────────────────────────────────┘
+[ Vendor Invoice PDF / PNG / JPEG ]
+                 │
+                 ▼
+┌─────────────────────────────────────────────────────────┐
+│  1. UNTRUSTED PERCEPTION LAYER                          │
+│  Multi-Model Gemini VLM Cascade + Local PDF Fallback    │
+│  • Extracts raw entities only (descriptions, qty, rate) │
+│  • Strictly prohibited from computing financial totals  │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│  2. RUNTIME SCHEMA & CONFIDENCE GUARDRAILS              │
+│  Zod Boundary Schema (`ExtractedInvoiceSchema`)         │
+│  • Enforces `extraction_confidence` & ambiguity arrays  │
+│  • Routes low-confidence (< 0.85) scans to review       │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│  3. TRUSTED DETERMINISTIC FINANCIAL ENGINE              │
+│  Pure TypeScript Integer-Cent Math (`src/lib/money.ts`) │
+│  • Zero IEEE 754 floating-point operations for money    │
+│  • Integer cents ($10.50 -> 1050¢) & basis points (bps) │
+│  • Dual-gate STP Tolerance Policy evaluation            │
+└───────────────────────────┬─────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────┐
+│  4. OPERATOR TRIAGE, DISPUTE & AUDIT LEDGER             │
+│  • Itemized Formal Dispute Notice & Short-Pay Generator │
+│  • Documented Human Override (`APPROVED_WITH_OVERRIDE`) │
+│  • Supabase PostgreSQL Immutable Audit Trail + RLS      │
+│  • Passwordless Operator Attribution (Magic Link Auth)  │
+└─────────────────────────────────────────────────────────┘
 ```
 
----
+### Core Engineering Invariants
 
-## Core Engineering Invariants
+1. **The Deterministic Split (`src/lib/extraction/gemini.ts` vs `src/lib/reconcile.ts`)**:
+   - Vision Language Models extract raw document entities only (`invoice_number`, `po_number`, `vendor_name`, `raw_description`, `quantity`, `unit_price`).
+   - The LLM **never** calculates line subtotals, tax amounts, net variances, or short-pay remittances.
+   - All financial comparisons execute inside pure, deterministic TypeScript domain functions.
 
-ClearMatch adheres to four strict architectural rules:
+2. **Integer-Only Financial Math (`src/lib/money.ts`)**:
+   - Floating-point arithmetic (`0.1 + 0.2 !== 0.3` or `10 * 12.79 + 4 * 44.15 = 304.50000000000006`) is eliminated at the boundary via string-parsed integer cent conversion (`dollarsToCents`).
+   - All currency values are stored and reconciled as integer cents (`125000` = `$1,250.00`).
+   - Tax rates and relative variance thresholds are evaluated in integer basis points (`1000 bps` = `10.00%`) with deterministic half-up rounding.
 
-1. **The Deterministic Split**
-   - The LLM extracts raw entities only (OCR text, descriptions, unit rates, quantities).
-   - The LLM **never** computes totals, taxes, variances, or margins.
-   - All financial logic resides in pure, isolated TypeScript domain functions.
-
-2. **Integer-Only Financial Math**
-   - Zero floating-point arithmetic for currency calculations.
-   - All monetary amounts are stored and calculated as integer cents (e.g., `$10.50` &rarr; `1050`).
-   - Tax rates use basis points (`10%` &rarr; `1000 bps`) with half-up integer rounding.
-
-3. **Strict TypeScript & Zero Untyped Data**
-   - Strict TypeScript mode enabled with zero `any`.
-   - All external inputs and model extractions validate through strict schemas.
-
-4. **Failure Defense & Auditing**
-   - Every invoice extraction validates against a [Zod schema](src/lib/extraction/schemas.ts).
-   - Extractions must return an `extraction_confidence` score and an `unresolved_ambiguities` audit array.
+3. **Strict TypeScript & Zod Runtime Validation (`src/lib/extraction/schemas.ts`)**:
+   - Strict TypeScript mode (`noImplicitAny`, `strictNullChecks`) with zero `any` types across API routes, domain logic, and UI components.
+   - Every extraction payload is validated against `ExtractedInvoiceSchema` and must include `extraction_confidence` (`0.0`–`1.0`) and `unresolved_ambiguities`.
 
 ---
 
-## Development Status & Roadmap
+## Core Capabilities
 
-| Feature | Status | Notes |
-| :--- | :---: | :--- |
-| **Integer Currency Math Library** | ✅ Complete | Zero floating point, integer cents, basis points rounding (`src/lib/money.ts`) |
-| **Deterministic Reconciliation Engine** | ✅ Complete | Line item matching, unit rate variance, quantity drift, 49 passing unit/route tests (`src/lib/reconcile.ts`) |
-| **Gemini 3.8 Flash Vision OCR** | ✅ Complete | Multimodal entity extraction with structured output, confidence guardrails & Zod validation |
-| **Reconciliation API & FinOps Guards** | ✅ Complete | `/api/reconcile` supports PDF/PNG/JPEG uploads with payload size (4MB), line-item (50), and token guards |
-| **Utilitarian Workbench UI** | ✅ Complete | Staged upload state machine, Reinforced Ledger vs. raw Trust Boundary inspector, instant architecture benchmarks |
-| **Compliance & ERP Audit Exports** | ✅ Complete | Client-side ERP CSV export and cryptographic-style JSON Audit Proofs (`untrustedVlmExtraction` + `trustedDeterministicLedger` + Trace ID) |
-| **AP Dispute & Override Workflows** | ✅ Complete | Automated Commercial Dispute Notice generator (`src/lib/utils/disputeNotice.ts`) and human-in-the-loop variance approval overrides |
-| **Dynamic PO Baseline Management** | ✅ Complete | Multi-preset procurement switcher (`PO-2026-0881`, `PO-2026-0104`) and interactive JSON contract editor with runtime Zod schema validation |
-| **Supabase Persistence & Audit Ledger** | 📋 Planned | Persistent PO storage, immutable reconciliation audit logs, historical tracking |
-| **Configurable Tolerance Policies** | ✅ Complete | Deterministic Straight-Through Processing (STP) thresholds (`Strict`, `Standard AP $1.00`, `High-Volume $5.00`) with dual-gate basis points, strict quantity invariants, and audit logging |
-
----
-
-## Tech Stack
-
-- **Framework**: [Next.js 16](https://nextjs.org/) (App Router, Turbopack) & [React 19](https://react.dev/)
-- **Language**: [TypeScript 5](https://www.typescriptlang.org/) (Strict Mode)
-- **AI / Multimodal OCR**: [@google/genai](https://www.npmjs.com/package/@google/genai) (Gemini 3.8 Flash)
-- **Validation**: [Zod](https://zod.dev/)
-- **Styling**: [Tailwind CSS v4](https://tailwindcss.com/)
-- **Testing**: [Vitest](https://vitest.dev/)
+- **Resilient Multi-Model VLM Cascade & Deterministic Fallback (`src/lib/extraction/gemini.ts`, `src/app/api/reconcile/route.ts`)**:
+  - Cascades across verified Gemini models (`gemini-3.5-flash` &rarr; `gemini-flash-lite-latest` &rarr; `gemini-4-argon` &rarr; `gemini-pro-latest` &rarr; `gemini-flash-latest`) with per-attempt `AbortController` timeouts.
+  - Includes a deterministic local PDF stream/zlib parser fallback so verification workflows remain 100% operational even during upstream API outages.
+- **Straight-Through Processing (STP) Tolerance Policies (`src/lib/types/tolerance.ts`)**:
+  - Configurable dual-gate governance presets (`Strict $0.00 / 0 bps`, `Standard AP $1.00 / 100 bps`, `High-Volume $5.00 / 200 bps`) enforcing both absolute cent caps and basis-point thresholds alongside strict quantity matching.
+- **Automated Formal Dispute Notice & Printable PDF Generator (`src/lib/disputeGenerator.ts`, `src/lib/disputePdfGenerator.ts`)**:
+  - Deterministically formats executive-ready `"NOTICE OF INVOICE DISCREPANCY & SHORT-PAY ADJUSTMENT"` memos with itemized line-by-line cent/dollar deltas, authorized short-pay remittance figures, and live operator signature attribution.
+  - Exports printable single-page corporate PDF dispute notices via `pdf-lib` (`[ 📄 Export Official PDF ]`) alongside plain-text `.txt` and clipboard copy workflows.
+- **Immutable Audit Ledger & Resolution Event Trail (`src/lib/services/auditService.ts`)**:
+  - Persists reconciliation runs to `public.reconciliations` and operator resolution actions (`DISPUTE_NOTICE_GENERATED`, `HUMAN_OVERRIDE`) to `public.audit_resolution_events` in Supabase PostgreSQL.
+  - Supports one-click state hydration from the slide-over `Audit Ledger History` drawer, RFC 4180 ERP CSV exports, and cryptographic-style JSON Audit Proofs.
+- **Passwordless Operator Attribution & Keyboard-First Triage HUD (`src/lib/supabaseAuth.ts`, `src/lib/hooks/useOperatorHotkeys.ts`)**:
+  - Integrates Supabase Email Magic Link authentication (`signInWithOtp`) to attribute reconciliations, overrides, and dispute memos to the signed-in operator (`operator_email`), with instant `"All Runs"` vs. `"My Runs"` ledger filtering and frictionless Guest Sandbox fallback.
+  - Global single-key operator shortcuts (`[1-3]` presets, `[Q/W]` sample PDFs, `[E]` extract, `[S]` cycle STP policy, `[T]` toggle Trust Boundary inspector, `[H]` audit history, `[D]` Light/Dark theme, `[K]` collapsible HUD, `[?]` shortcut reference) with automatic input-focus guards.
 
 ---
 
-## Getting Started
+## Local Quickstart & Test Suite
 
-### Prerequisites
+### 1. Install Dependencies
 
-- **Node.js**: v20 or newer
-- **npm**, **pnpm**, or **yarn**
-- **Gemini API Key**: from [Google AI Studio](https://aistudio.google.com/)
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/astukov56/clearmatch.git
-   cd clearmatch
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Set up environment variables:
-   ```bash
-   cp .env.example .env.local # or create .env.local
-   ```
-   Add your Gemini API key:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   ```
-
-### Running the Development Server
-
-Start the local server:
 ```bash
-npm run dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to view the application workbench.
+### 2. Configure Environment Variables
 
-### Running Tests
+Copy `.env.example` to `.env.local` and populate your credentials (ClearMatch also runs gracefully in local offline/sandbox mode if keys are omitted):
 
-Execute the unit and integration test suite:
+```bash
+cp .env.example .env.local
+```
+
+```env
+# Google Gemini API Key for live PDF/Image VLM extraction
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# Supabase Project Credentials for Audit Ledger & Magic Link Auth
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_publishable_key_here
+```
+
+### 3. Generate Synthetic Verification PDFs
+
+Generate the sample invoice PDFs (`vertex-clean-match-inv-2026-4401.pdf` and `vertex-seat-creep-drift-inv-2026-4402.pdf`) in `public/synthetic-invoices/`:
+
+```bash
+npm run generate:invoices
+```
+
+### 4. Run Unit & Integration Tests
+
+Run the full Vitest suite (14 test suites, 127 tests covering integer money math, reconciliation engine, dispute memo generation, hotkey dispatching, Supabase auth/audit persistence, and API route resilience):
+
 ```bash
 npm test
 ```
 
-Type-check without emitting:
+Run strict TypeScript verification and production build:
+
 ```bash
 npx tsc --noEmit
+npm run build
 ```
+
+### 5. Start the Development Workbench
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to launch the ClearMatch operator workbench.
 
 ---
 
@@ -175,29 +156,35 @@ npx tsc --noEmit
 
 ```text
 clearmatch/
+├── public/
+│   └── synthetic-invoices/          # Generated sample PDFs for live ingestion verification
+├── scripts/
+│   └── generate-synthetic-invoices.ts
 ├── src/
 │   ├── app/
-│   │   ├── api/
-│   │   │   └── reconcile/           # POST endpoint: file/JSON extraction & matching
+│   │   ├── api/reconcile/           # POST /api/reconcile route & multi-model fallback tests
+│   │   ├── globals.css              # Light & Carbon-Slate Dark theme styling rules
 │   │   ├── layout.tsx
-│   │   └── page.tsx                 # Interactive reconciliation workbench & audit trail
+│   │   └── page.tsx                 # Main ClearMatch Operator Workbench
 │   ├── components/
-│   │   └── DisputeModal.tsx         # Plain-text dispute notice modal, .txt download & mailto
+│   │   ├── AuditLedgerDrawer.tsx    # Historical audit trail slide-over & "My Runs" filter
+│   │   ├── DisputeModal.tsx         # Expandable vendor dispute notice modal
+│   │   ├── DisputeResolutionPanel.tsx # Inline dispute notice preview & human override form
+│   │   ├── KeyboardHudBar.tsx       # Collapsible 1-line keyboard HUD & [?] reference modal
+│   │   ├── OperatorAuthModal.tsx    # Passwordless Supabase Magic Link sign-in modal
+│   │   └── PoBaselineModal.tsx      # Interactive PO baseline switcher & JSON contract editor
 │   └── lib/
-│       ├── extraction/              # Gemini Vision client & Zod extraction schemas
-│       │   ├── gemini.ts            # Multimodal extraction caller with structured output
-│       │   └── schemas.ts           # ExtractedInvoice runtime schema & confidence guards
-│       ├── utils/
-│       │   ├── disputeNotice.ts     # Commercial vendor dispute notice memo generator
-│       │   └── export.ts            # ERP-ready CSV and cryptographic JSON audit proof exporters
-│       ├── money.ts                 # Integer-only currency arithmetic (cents & bps)
-│       └── reconcile.ts             # Deterministic line item matching engine
-├── fixtures/                        # Test purchase orders and sample invoice payloads
-└── vitest.config.mts                # Vitest configuration
+│       ├── constants/               # Authorized Purchase Order baseline presets
+│       ├── extraction/              # Gemini multi-model cascade & Zod boundary schemas
+│       ├── hooks/                   # Global keyboard shortcut dispatcher (`useOperatorHotkeys`)
+│       ├── services/                # Supabase audit persistence (`auditService.ts`)
+│       ├── supabase/                # Singleton Supabase client with offline/test guards
+│       ├── types/                   # STP Tolerance Policy definitions (`tolerance.ts`)
+│       ├── utils/                   # RFC 4180 CSV & JSON Audit Proof exporters
+│       ├── disputeGenerator.ts      # Deterministic Dispute Notice & Short-Pay memo generator
+│       ├── disputePdfGenerator.ts   # Printable single-page corporate PDF Dispute Notice generator (`pdf-lib`)
+│       ├── money.ts                 # Pure integer-cent & basis-point financial arithmetic
+│       ├── reconcile.ts             # Deterministic PO vs. Invoice reconciliation engine
+│       └── supabaseAuth.ts          # Passwordless Magic Link auth helpers & session hook
+└── .env.example                     # Environment variable template
 ```
-
----
-
-## License
-
-This project is currently private / in development. All rights reserved.

@@ -4,6 +4,9 @@ import { ExtractedInvoice, ExtractedInvoiceSchema } from './schemas';
 export interface ExtractionInput {
   base64Data: string;
   mimeType: 'image/png' | 'image/jpeg' | 'application/pdf';
+  model?: string;
+  prompt?: string;
+  abortSignal?: AbortSignal;
 }
 
 const SYSTEM_INSTRUCTION = `You are a specialized OCR and entity extraction engine for invoices in the ClearMatch financial reconciliation system.
@@ -148,8 +151,10 @@ export async function extractInvoiceFromDocument(
     ? input.base64Data.split(';base64,')[1]
     : input.base64Data;
 
+  const selectedModel = input.model || process.env.GEMINI_MODEL || 'gemini-flash-latest';
+
   const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash',
+    model: selectedModel,
     contents: [
       {
         inlineData: {
@@ -158,7 +163,7 @@ export async function extractInvoiceFromDocument(
         },
       },
       {
-        text: EXTRACTION_PROMPT,
+        text: input.prompt || EXTRACTION_PROMPT,
       },
     ],
     config: {
@@ -166,6 +171,7 @@ export async function extractInvoiceFromDocument(
       responseMimeType: 'application/json',
       responseSchema: invoiceExtractionSchema,
       temperature: 0,
+      ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     },
   });
 

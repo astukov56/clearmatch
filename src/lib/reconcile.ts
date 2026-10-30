@@ -40,6 +40,7 @@ export interface ReconciledLineItem {
   expected_unit_price_cents: number;
   variance_unit_price_cents: number;
   invoiced_line_total_cents: number;
+  line_variance_cents?: number;
 }
 
 export type ReconciliationStatus = 
@@ -50,12 +51,14 @@ export type ReconciliationStatus =
   | 'APPROVED_WITH_OVERRIDE';
 
 export interface ReconciliationResult {
+  trace_id?: string;
   po_number: string;
   invoice_number: string;
   vendor_name: string;
   status: ReconciliationStatus;
   total_variance_cents: number;
   invoiced_subtotal_cents: number;
+  po_subtotal_cents?: number;
   line_items: ReconciledLineItem[];
   unmatched_po_items: POLineItem[];
   audit_notes: string[];
@@ -121,9 +124,9 @@ export function reconcile(
   const remainingPOItems: POLineItem[] = [...po.items];
 
   // Header validations
-  const normPoVendor = po.vendor_name.trim().toLowerCase();
-  const normInvVendor = invoice.vendor_name.trim().toLowerCase();
-  const isVendorMatch = normPoVendor === normInvVendor;
+  const cleanVendor = (v: string) =>
+    v.trim().toLowerCase().replace(/\s+(llc|inc|corp|co|ltd)\.?$/i, '').trim();
+  const isVendorMatch = cleanVendor(po.vendor_name) === cleanVendor(invoice.vendor_name);
   if (!isVendorMatch) {
     auditNotes.push(
       `Vendor mismatch: PO specifies "${po.vendor_name}" but invoice specifies "${invoice.vendor_name}".`
@@ -317,6 +320,7 @@ export function reconcile(
 }
 
 export const reconcileInvoice = reconcile;
+export type ReconciledInvoice = ReconciliationResult;
 
 export function reconcileInvoiceAgainstPO(
   invoiceOrPo: ExtractedInvoice | PurchaseOrder,

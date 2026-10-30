@@ -101,6 +101,41 @@ export const PO_VERTEX_SAAS: PurchaseOrder = {
   tax_cents: 17500,
   total_cents: 192500,
 };
+ 
+/**
+ * Preset 2B: Synthetic Ingestion Baseline ($1,250.00 / 125,000¢)
+ * Targeting synthetic vertex invoices (1x Base Subscription + 8x Provisioned Seats)
+ */
+export const PO_VERTEX_SYNTHETIC_1250: PurchaseOrder = {
+  id: 'po-1002-vtx1250',
+  po_number: 'PO-2026-0104',
+  vendor_name: 'Vertex Cloud Services',
+  currency: 'USD',
+  issue_date: '2026-10-05',
+  items: [
+    {
+      line_number: 1,
+      sku: 'VTX-SUB-BASE',
+      description: 'Vertex Platform Enterprise Tier - Base Subscription (Monthly)',
+      quantity: 1,
+      unit_price_cents: 85000,
+      tax_rate_bps: 0,
+      total_cents: 85000,
+    },
+    {
+      line_number: 2,
+      sku: 'VTX-SEAT-SUPP',
+      description: 'Additional Provisioned Seats (Tier 1 Support)',
+      quantity: 8,
+      unit_price_cents: 5000,
+      tax_rate_bps: 0,
+      total_cents: 40000,
+    },
+  ],
+  subtotal_cents: 125000,
+  tax_cents: 0,
+  total_cents: 125000,
+};
 
 /**
  * Preset 3: User-defined Custom Baseline template

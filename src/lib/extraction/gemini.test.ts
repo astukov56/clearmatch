@@ -62,7 +62,7 @@ describe('extractInvoiceFromDocument', () => {
     expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     expect(mockGenerateContent).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-flash-latest',
       })
     );
   });

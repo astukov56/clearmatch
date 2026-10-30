@@ -71,7 +71,7 @@ export function calculateVarianceCents(invoicedCents: number, expectedCents: num
  */
 export function formatCurrency(
     cents: number,
-    options?: { showPositiveSign?: boolean }
+    options?: { showPositiveSign?: boolean; useGrouping?: boolean }
 ): string {
     if (!Number.isInteger(cents)) {
         throw new TypeError(`Cents value must be an integer, received: ${cents}`);
@@ -82,17 +82,20 @@ export function formatCurrency(
     const dollars = Math.floor(absoluteCents / 100);
     const remainder = absoluteCents % 100;
     const paddedRemainder = remainder.toString().padStart(2, '0');
+    const formattedDollars = options?.useGrouping
+        ? dollars.toLocaleString('en-US')
+        : dollars.toString();
 
     if (isNegative) {
-        return `-$${dollars}.${paddedRemainder}`;
+        return `-$${formattedDollars}.${paddedRemainder}`;
     }
     if (options?.showPositiveSign && cents > 0) {
-        return `+$${dollars}.${paddedRemainder}`;
+        return `+$${formattedDollars}.${paddedRemainder}`;
     }
-    return `$${dollars}.${paddedRemainder}`;
+    return `$${formattedDollars}.${paddedRemainder}`;
 }
 
 /**
  * Minor units (integer cents) currency formatting helper.
  */
-export const formatMinorUnits = formatCurrency;
+export const formatMinorUnits = formatCurrency;

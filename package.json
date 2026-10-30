@@ -7,12 +7,14 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "generate:invoices": "tsx scripts/generate-synthetic-invoices.ts"
   },
   "dependencies": {
     "@google/genai": "^2.29.0",
     "@supabase/supabase-js": "^2.109.0",
     "next": "^16.4.2",
+    "pdf-lib": "^1.17.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"
@@ -25,6 +27,7 @@
     "eslint": "^9",
     "eslint-config-next": "^16.4.2",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.11"
   }
